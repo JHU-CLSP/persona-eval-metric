@@ -102,6 +102,17 @@ class OpenAlexClient:
         logger.debug("No abstract found for %s", openalex_url)
         return None
 
+    def get_title(self, openalex_url: str) -> str | None:
+        """Fetch the title for a single paper."""
+        work = self.get_work(openalex_url)
+        if not work:
+            return None
+        title = work.get("title")
+        if title:
+            return title.strip()
+        logger.debug("No title found for %s", openalex_url)
+        return None
+
     def get_source_text(self, paper_ids: list[str]) -> str:
         """Fetch and concatenate abstracts for all papers in a query.
 
@@ -121,13 +132,35 @@ class OpenAlexClient:
 
         return "\n\n".join(abstracts)
 
-    def get_source_texts_batch(
+    def get_reference_text(self, paper_ids: list[str]) -> str:
+        """Fetch and concatenate titles for all papers in a query.
+
+        Used as reference text for reference-based metrics (ROUGE, BERTScore).
+        Returns a single string with titles separated by newlines.
+        """
+        titles = []
+        for pid in paper_ids:
+            title = self.get_title(pid)
+            if title:
+                titles.append(title)
+            else:
+                logger.debug("Missing title for %s", pid)
+
+        if not titles:
+            logger.warning("No titles found for any of %d papers", len(paper_ids))
+            return ""
+
+        return "\n".join(titles)
+
+    def get_texts_batch(
         self,
         entries: list[AnnotationEntry],
-    ) -> dict[int, str]:
-        """Fetch source texts for all unique queries across entries.
+    ) -> tuple[dict[int, str], dict[int, str]]:
+        """Fetch source and reference texts for all unique queries.
 
-        Returns {query_index: source_text}.
+        Returns (source_texts, reference_texts) where:
+            source_texts: {query_index: concatenated_abstracts}
+            reference_texts: {query_index: concatenated_titles}
         """
         # Deduplicate: many annotators share the same query
         query_papers: dict[int, list[str]] = {}
@@ -136,10 +169,12 @@ class OpenAlexClient:
                 query_papers[entry.query_index] = entry.paper_ids
 
         source_texts = {}
+        reference_texts = {}
         for qi, paper_ids in tqdm(
             sorted(query_papers.items()),
             desc="Fetching source documents",
         ):
             source_texts[qi] = self.get_source_text(paper_ids)
+            reference_texts[qi] = self.get_reference_text(paper_ids)
 
-        return source_texts
+        return source_texts, reference_texts

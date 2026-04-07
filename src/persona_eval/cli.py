@@ -32,20 +32,28 @@ def cmd_fetch_sources(args):
     """Fetch and cache OpenAlex source documents."""
     _, entries = load_annotations(args.annotations)
     client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
-    source_texts = client.get_source_texts_batch(entries)
-    print(f"Fetched source texts for {len(source_texts)} unique queries")
-    n_empty = sum(1 for t in source_texts.values() if not t)
-    if n_empty:
-        print(f"  ({n_empty} queries had no abstracts available)")
+    source_texts, reference_texts = client.get_texts_batch(entries)
+    print(f"Fetched texts for {len(source_texts)} unique queries")
+    n_empty_src = sum(1 for t in source_texts.values() if not t)
+    n_empty_ref = sum(1 for t in reference_texts.values() if not t)
+    if n_empty_src:
+        print(f"  ({n_empty_src} queries had no abstracts available)")
+    if n_empty_ref:
+        print(f"  ({n_empty_ref} queries had no titles available)")
 
 
 def _compute_metric_scores(
     entries: list[AnnotationEntry],
     source_texts: dict[int, str],
+    reference_texts: dict[int, str],
     metric_names: list[str],
     device: str = "cpu",
 ) -> pd.DataFrame:
-    """Compute metric scores for all (query, summary) pairs."""
+    """Compute metric scores for all (query, summary) pairs.
+
+    Reference-free metrics receive concatenated abstracts as their source.
+    Reference-based metrics receive concatenated titles as their source.
+    """
     # Deduplicate: compute once per unique (query_index, label)
     seen = set()
     tasks = []
@@ -60,6 +68,7 @@ def _compute_metric_scores(
                         "label": label,
                         "summary": entry.summaries[label],
                         "source": source_texts.get(entry.query_index, ""),
+                        "reference": reference_texts.get(entry.query_index, ""),
                     }
                 )
 
@@ -67,9 +76,10 @@ def _compute_metric_scores(
     for metric_name in metric_names:
         print(f"Computing {metric_name}...")
         metric = get_metric(metric_name, device=device)
+        text_key = "source" if metric.is_reference_free else "reference"
 
         for task in tqdm(tasks, desc=metric_name):
-            scores = metric.score(task["summary"], task["source"])
+            scores = metric.score(task["summary"], task[text_key])
             rows.append(
                 {
                     "query_index": task["query_index"],
@@ -92,11 +102,11 @@ def cmd_compute_metrics(args):
     """Compute automatic metrics for all summaries."""
     _, entries = load_annotations(args.annotations)
     client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
-    source_texts = client.get_source_texts_batch(entries)
+    source_texts, reference_texts = client.get_texts_batch(entries)
 
     metric_names = args.metrics if args.metrics else list_metrics()
-    scores_df = _compute_metric_scores(entries, source_texts, metric_names,
-                                        device=args.device)
+    scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
+                                        metric_names, device=args.device)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -140,13 +150,13 @@ def cmd_run_all(args):
 
     # Fetch sources
     client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
-    source_texts = client.get_source_texts_batch(entries)
-    print(f"Fetched source texts for {len(source_texts)} unique queries")
+    source_texts, reference_texts = client.get_texts_batch(entries)
+    print(f"Fetched texts for {len(source_texts)} unique queries")
 
     # Compute metrics
     metric_names = args.metrics if args.metrics else list_metrics()
-    scores_df = _compute_metric_scores(entries, source_texts, metric_names,
-                                        device=args.device)
+    scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
+                                        metric_names, device=args.device)
     scores_path = output_dir / "metric_scores.csv"
     scores_df.to_csv(scores_path, index=False)
     print(f"Saved metric scores to {scores_path}")
