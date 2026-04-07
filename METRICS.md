@@ -11,6 +11,7 @@ These metrics work out of the box after `pip install -e .`:
 | **BLEU** | reference-based | titles | `summ-eval` (sacrebleu) |
 | **ChrF++** | reference-based | titles | `summ-eval` (sacrebleu) |
 | **CIDEr** | reference-based | titles | `summ-eval` |
+| **METEOR** | reference-based | titles | `nltk` |
 | **SUPERT** | reference-free | abstracts | `summ-eval` |
 | **SummaQA** | reference-free | abstracts | `summ-eval` |
 | **BLANC** | reference-free | abstracts | `summ-eval` |
@@ -106,31 +107,6 @@ rm -rf /tmp/s3-models
 
 The model folder must contain two pickle files: one with `pyr` in the name
 (pyramid score model) and one with `resp` (responsiveness model).
-
----
-
-### Meteor
-
-**Dependency:** Java Runtime Environment (JRE 7+) and the Meteor 1.5 JAR.
-
-**Setup:**
-
-```bash
-# 1. Install Java (macOS)
-brew install openjdk
-# Or on Ubuntu:
-# sudo apt install default-jre
-
-# Verify Java is available
-java -version
-
-# 2. Download meteor-1.5.jar (auto-downloaded on first use, or manually):
-SUMM_EVAL_DIR=$(python -c "import summ_eval, os; print(os.path.dirname(summ_eval.__file__))")
-curl -L -o "$SUMM_EVAL_DIR/meteor-1.5.jar" \
-  "https://github.com/Maluuba/nlg-eval/blob/master/nlgeval/pycocoevalcap/meteor/meteor-1.5.jar?raw=true"
-```
-
-Meteor allocates up to 2 GB of JVM heap memory by default.
 
 ---
 

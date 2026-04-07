@@ -143,6 +143,43 @@ class ChrfMetric(BaseMetric):
         return {"chrf": float(result.get("chrf", 0.0))}
 
 
+@register_metric("meteor")
+class MeteorMetric(BaseMetric):
+    """METEOR: alignment-based metric using synonyms and stemming (via nltk).
+
+    Uses nltk's pure-Python METEOR implementation instead of the Java-based
+    Meteor 1.5 JAR required by summ-eval, so no Java installation is needed.
+    """
+
+    def __init__(self, **kwargs):
+        self._loaded = False
+
+    @property
+    def name(self) -> str:
+        return "METEOR"
+
+    @property
+    def is_reference_free(self) -> bool:
+        return False
+
+    def _load(self):
+        if not self._loaded:
+            import nltk
+
+            nltk.download("wordnet", quiet=True)
+            nltk.download("omw-1.4", quiet=True)
+            self._loaded = True
+
+    def score(self, summary: str, source: str) -> dict[str, float]:
+        self._load()
+        from nltk.translate.meteor_score import meteor_score
+
+        reference_tokens = source.split()
+        hypothesis_tokens = summary.split()
+        score = meteor_score([reference_tokens], hypothesis_tokens)
+        return {"meteor": float(score)}
+
+
 @register_metric("bleu")
 class BleuMetric(BaseMetric):
     """BLEU: n-gram precision metric (via summ-eval / sacrebleu)."""
