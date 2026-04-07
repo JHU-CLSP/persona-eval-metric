@@ -9,6 +9,7 @@ These metrics work out of the box after `pip install -e .`:
 | **ROUGE** | reference-based | titles | `rouge-score` |
 | **BERTScore** | reference-based | titles | `bert-score` |
 | **BLEU** | reference-based | titles | `summ-eval` (sacrebleu) |
+| **ChrF++** | reference-based | titles | `summ-eval` (sacrebleu) |
 | **CIDEr** | reference-based | titles | `summ-eval` |
 | **SUPERT** | reference-free | abstracts | `summ-eval` |
 | **SummaQA** | reference-free | abstracts | `summ-eval` |
@@ -21,22 +22,6 @@ The following `summ-eval` metrics are not included by default because they
 require external dependencies. Each section describes the dependency and how to
 install it. Once the dependency is satisfied, adding the metric wrapper is
 straightforward (see [Adding a metric](#adding-a-metric) below).
-
----
-
-### ChrF++
-
-**Issue:** The `summ-eval` wrapper calls `sacrebleu.sentence_chrf(..., order=N)`,
-but the installed sacrebleu (2.x) renamed the `order` parameter to `char_order`.
-
-**Fix:** Pin sacrebleu to the version summ-eval was written against:
-
-```bash
-pip install "sacrebleu<2.0"
-```
-
-Alternatively, patch the call in your wrapper to use `char_order=` instead of
-`order=`.
 
 ---
 

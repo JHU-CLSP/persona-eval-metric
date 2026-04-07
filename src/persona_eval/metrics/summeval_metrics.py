@@ -116,6 +116,33 @@ class BlancMetric(BaseMetric):
 # ---------------------------------------------------------------------------
 
 
+@register_metric("chrf")
+class ChrfMetric(BaseMetric):
+    """ChrF++: character n-gram F-score metric (via summ-eval / sacrebleu)."""
+
+    def __init__(self, **kwargs):
+        self._metric = None
+
+    @property
+    def name(self) -> str:
+        return "ChrF++"
+
+    @property
+    def is_reference_free(self) -> bool:
+        return False
+
+    def _load(self):
+        if self._metric is None:
+            from summ_eval.chrfpp_metric import ChrfppMetric as _Chrf
+
+            self._metric = _Chrf()
+
+    def score(self, summary: str, source: str) -> dict[str, float]:
+        self._load()
+        result = self._metric.evaluate_example(summary, source)
+        return {"chrf": float(result.get("chrf", 0.0))}
+
+
 @register_metric("bleu")
 class BleuMetric(BaseMetric):
     """BLEU: n-gram precision metric (via summ-eval / sacrebleu)."""
