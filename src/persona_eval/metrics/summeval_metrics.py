@@ -73,6 +73,8 @@ class SummaQAMetric(BaseMetric):
     def _load(self):
         if self._metric is None:
             from summ_eval.summa_qa_metric import SummaQAMetric as _SummaQA
+            import transformers
+            transformers.logging.set_verbosity_error()
 
             self._metric = _SummaQA(use_gpu=self._device != "cpu")
 
