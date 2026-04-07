@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 class BertScoreMetric(BaseMetric):
     """BERTScore: semantic similarity using contextual embeddings."""
 
-    def __init__(self, model_type: str = "bert-base-uncased", **kwargs):
+    def __init__(self, model_type: str = "bert-base-uncased", device: str = "cpu", **kwargs):
         self._scorer = None
         self._model_type = model_type
+        self._device = device
 
     @property
     def name(self) -> str:
@@ -41,6 +42,7 @@ class BertScoreMetric(BaseMetric):
             [summary],
             [source],
             model_type=self._model_type,
+            device=self._device,
             verbose=False,
         )
         return {
@@ -57,6 +59,7 @@ class BertScoreMetric(BaseMetric):
             summaries,
             sources,
             model_type=self._model_type,
+            device=self._device,
             verbose=False,
         )
         return [

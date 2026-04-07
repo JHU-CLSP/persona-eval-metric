@@ -43,6 +43,7 @@ def _compute_metric_scores(
     entries: list[AnnotationEntry],
     source_texts: dict[int, str],
     metric_names: list[str],
+    device: str = "cpu",
 ) -> pd.DataFrame:
     """Compute metric scores for all (query, summary) pairs."""
     # Deduplicate: compute once per unique (query_index, label)
@@ -65,7 +66,7 @@ def _compute_metric_scores(
     rows = []
     for metric_name in metric_names:
         print(f"Computing {metric_name}...")
-        metric = get_metric(metric_name)
+        metric = get_metric(metric_name, device=device)
 
         for task in tqdm(tasks, desc=metric_name):
             scores = metric.score(task["summary"], task["source"])
@@ -94,7 +95,8 @@ def cmd_compute_metrics(args):
     source_texts = client.get_source_texts_batch(entries)
 
     metric_names = args.metrics if args.metrics else list_metrics()
-    scores_df = _compute_metric_scores(entries, source_texts, metric_names)
+    scores_df = _compute_metric_scores(entries, source_texts, metric_names,
+                                        device=args.device)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +145,8 @@ def cmd_run_all(args):
 
     # Compute metrics
     metric_names = args.metrics if args.metrics else list_metrics()
-    scores_df = _compute_metric_scores(entries, source_texts, metric_names)
+    scores_df = _compute_metric_scores(entries, source_texts, metric_names,
+                                        device=args.device)
     scores_path = output_dir / "metric_scores.csv"
     scores_df.to_csv(scores_path, index=False)
     print(f"Saved metric scores to {scores_path}")
@@ -201,6 +204,7 @@ def main():
     sp.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all)")
     sp.add_argument("--cache-dir", default="cache", help="Cache directory")
     sp.add_argument("--email", help="Email for OpenAlex polite pool")
+    sp.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
     sp.add_argument("--output", default="metric_scores.csv", help="Output CSV path")
     sp.set_defaults(func=cmd_compute_metrics)
 
@@ -217,6 +221,7 @@ def main():
     sp.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all)")
     sp.add_argument("--cache-dir", default="cache", help="Cache directory")
     sp.add_argument("--email", help="Email for OpenAlex polite pool")
+    sp.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
     sp.add_argument("--output-dir", default="results", help="Output directory")
     sp.set_defaults(func=cmd_run_all)
 

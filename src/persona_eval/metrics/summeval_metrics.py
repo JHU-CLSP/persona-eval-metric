@@ -31,8 +31,9 @@ def _ensure_summeval_path():
 class SupertMetric(BaseMetric):
     """SUPERT: reference-free multi-document summarization metric (via summ-eval)."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, device: str = "cpu", **kwargs):
         self._metric = None
+        self._device = device
 
     @property
     def name(self) -> str:
@@ -41,6 +42,12 @@ class SupertMetric(BaseMetric):
     def _load(self):
         if self._metric is None:
             _ensure_summeval_path()
+            import torch
+
+            # summ-eval SUPERT uses the default torch device internally
+            if self._device != "cpu" and torch.cuda.is_available():
+                torch.cuda.set_device(self._device if self._device != "cuda" else 0)
+
             from summ_eval.supert_metric import SupertMetric as _Supert
 
             self._metric = _Supert()
@@ -55,8 +62,9 @@ class SupertMetric(BaseMetric):
 class SummaQAMetric(BaseMetric):
     """SummaQA: QA-based reference-free summarization metric (via summ-eval)."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, device: str = "cpu", **kwargs):
         self._metric = None
+        self._device = device
 
     @property
     def name(self) -> str:
@@ -66,7 +74,7 @@ class SummaQAMetric(BaseMetric):
         if self._metric is None:
             from summ_eval.summa_qa_metric import SummaQAMetric as _SummaQA
 
-            self._metric = _SummaQA()
+            self._metric = _SummaQA(use_gpu=self._device != "cpu")
 
     def score(self, summary: str, source: str) -> dict[str, float]:
         self._load()
