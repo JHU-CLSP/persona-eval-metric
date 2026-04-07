@@ -1,4 +1,4 @@
-"""Metric wrappers using the summ-eval package (SUPERT, SummaQA, BLANC)."""
+"""Metric wrappers using the summ-eval package."""
 
 from __future__ import annotations
 
@@ -109,3 +109,90 @@ class BlancMetric(BaseMetric):
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {"blanc": float(result.get("blanc", 0.0))}
+
+
+# ---------------------------------------------------------------------------
+# Reference-based metrics
+# ---------------------------------------------------------------------------
+
+
+@register_metric("bleu")
+class BleuMetric(BaseMetric):
+    """BLEU: n-gram precision metric (via summ-eval / sacrebleu)."""
+
+    def __init__(self, **kwargs):
+        self._metric = None
+
+    @property
+    def name(self) -> str:
+        return "BLEU"
+
+    @property
+    def is_reference_free(self) -> bool:
+        return False
+
+    def _load(self):
+        if self._metric is None:
+            from summ_eval.bleu_metric import BleuMetric as _Bleu
+
+            self._metric = _Bleu()
+
+    def score(self, summary: str, source: str) -> dict[str, float]:
+        self._load()
+        result = self._metric.evaluate_example(summary, source)
+        return {"bleu": float(result.get("bleu", 0.0))}
+
+
+@register_metric("cider")
+class CiderMetric(BaseMetric):
+    """CIDEr: consensus-based evaluation metric (via summ-eval)."""
+
+    def __init__(self, **kwargs):
+        self._metric = None
+
+    @property
+    def name(self) -> str:
+        return "CIDEr"
+
+    @property
+    def is_reference_free(self) -> bool:
+        return False
+
+    def _load(self):
+        if self._metric is None:
+            from summ_eval.cider_metric import CiderMetric as _Cider
+
+            self._metric = _Cider()
+
+    def score(self, summary: str, source: str) -> dict[str, float]:
+        self._load()
+        result = self._metric.evaluate_example(summary, source)
+        return {"cider": float(result.get("cider", 0.0))}
+
+
+# ---------------------------------------------------------------------------
+# Reference-free metrics
+# ---------------------------------------------------------------------------
+
+
+@register_metric("data_stats")
+class DataStatsMetric(BaseMetric):
+    """DataStats: extractive statistics — coverage, density, compression, novelty (via summ-eval)."""
+
+    def __init__(self, **kwargs):
+        self._metric = None
+
+    @property
+    def name(self) -> str:
+        return "DataStats"
+
+    def _load(self):
+        if self._metric is None:
+            from summ_eval.data_stats_metric import DataStatsMetric as _DS
+
+            self._metric = _DS()
+
+    def score(self, summary: str, source: str) -> dict[str, float]:
+        self._load()
+        result = self._metric.evaluate_example(summary, source)
+        return {k: float(v) for k, v in result.items()}
