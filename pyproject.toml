@@ -1,0 +1,32 @@
+[project]
+name = "persona-eval-metric"
+version = "0.1.0"
+description = "Correlate human annotation preferences with automatic summarization metrics"
+requires-python = ">=3.9,<3.10"
+dependencies = [
+    "requests>=2.28",
+    "pyalex>=0.13",
+    "scipy>=1.10",
+    "numpy>=1.19,<2.0",
+    "pandas>=1.5",
+    "tqdm>=4.60",
+    "summ-eval>=0.892",
+    "spacy>=2.2,<3.8",
+    "scikit-learn>=1.0",
+    "transformers>=4.20,<4.37",
+    "rouge-score>=0.1.2",
+    "bert-score>=0.3.13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov", "ruff"]
+
+[project.scripts]
+persona-eval = "persona_eval.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
