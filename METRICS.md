@@ -16,6 +16,7 @@ These metrics work out of the box after `pip install -e .`:
 | **SummaQA** | reference-free | abstracts | `summ-eval` |
 | **BLANC** | reference-free | abstracts | `summ-eval` |
 | **DataStats** | reference-free | abstracts | `summ-eval` |
+| **Syntactic** | reference-free | _(summary only)_ | `spacy` |
 
 ## Metrics requiring additional setup
 
@@ -107,31 +108,6 @@ rm -rf /tmp/s3-models
 
 The model folder must contain two pickle files: one with `pyr` in the name
 (pyramid score model) and one with `resp` (responsiveness model).
-
----
-
-### Syntactic
-
-**Dependency:** Stanford CoreNLP (2018-10-05 release) and Java.
-
-**Setup:**
-
-```bash
-# 1. Install Java (see Meteor section above)
-
-# 2. Download and extract CoreNLP (auto-downloaded on first use, or manually):
-SUMM_EVAL_DIR=$(python -c "import summ_eval, os; print(os.path.dirname(summ_eval.__file__))")
-curl -L -o /tmp/corenlp.zip \
-  http://nlp.stanford.edu/software/stanford-corenlp-full-2018-10-05.zip
-unzip /tmp/corenlp.zip -d "$SUMM_EVAL_DIR/"
-rm /tmp/corenlp.zip
-
-# 3. Set the environment variable
-export CORENLP_HOME="$SUMM_EVAL_DIR/stanford-corenlp-full-2018-10-05/"
-```
-
-Add the `export` line to your shell profile (`.bashrc` / `.zshrc`) to persist
-it. The CoreNLP server is configured to use 16 GB of memory.
 
 ---
 
