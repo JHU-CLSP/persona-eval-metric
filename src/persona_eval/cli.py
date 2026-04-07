@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from tqdm import tqdm
 
 from persona_eval.annotations import AnnotationEntry, load_annotations, get_pairwise_preferences
@@ -114,19 +115,37 @@ def cmd_compute_metrics(args):
     print(f"Saved metric scores to {output} ({len(scores_df)} rows)")
 
 
+def _load_neither_thresholds(path: str | None) -> dict[str, float] | None:
+    """Load per-metric neither thresholds from a YAML config file."""
+    if path is None:
+        return None
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    return {str(k): float(v) for k, v in data.items()}
+
+
 def cmd_correlate(args):
     """Compute correlations between metrics and human preferences."""
     _, entries = load_annotations(args.annotations)
     scores_df = pd.read_csv(args.scores)
-    preferences = get_pairwise_preferences(entries)
+
+    include_neither = getattr(args, "include_neither", False)
+    neither_config = getattr(args, "neither_config", None)
+    neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
+
+    preferences = get_pairwise_preferences(entries, include_neither=include_neither)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Pairwise agreement
-    agreement = compute_pairwise_agreement(preferences, scores_df)
+    agreement = compute_pairwise_agreement(
+        preferences, scores_df, neither_thresholds=neither_thresholds,
+    )
     agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
     print("\n=== Pairwise Agreement ===")
+    if include_neither:
+        print(f"(including 'neither' annotations with thresholds from {neither_config})")
     print(agreement.to_string(index=False))
 
     # Rank correlation
@@ -162,9 +181,15 @@ def cmd_run_all(args):
     print(f"Saved metric scores to {scores_path}")
 
     # Compute correlations
-    preferences = get_pairwise_preferences(entries)
+    include_neither = getattr(args, "include_neither", False)
+    neither_config = getattr(args, "neither_config", None)
+    neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
 
-    agreement = compute_pairwise_agreement(preferences, scores_df)
+    preferences = get_pairwise_preferences(entries, include_neither=include_neither)
+
+    agreement = compute_pairwise_agreement(
+        preferences, scores_df, neither_thresholds=neither_thresholds,
+    )
     agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
 
     per_query = compute_rank_correlation(entries, scores_df)
@@ -222,6 +247,10 @@ def main():
     sp = subparsers.add_parser("correlate", help="Compute metric-human correlations")
     sp.add_argument("annotations", help="Path to annotations zip or directory")
     sp.add_argument("--scores", required=True, help="Path to metric scores CSV")
+    sp.add_argument("--include-neither", action="store_true",
+                    help="Include 'neither' annotations in pairwise agreement")
+    sp.add_argument("--neither-config", default=None,
+                    help="Path to YAML config with per-metric thresholds for 'neither' agreement")
     sp.add_argument("--output-dir", default="results", help="Output directory")
     sp.set_defaults(func=cmd_correlate)
 
@@ -232,6 +261,10 @@ def main():
     sp.add_argument("--cache-dir", default="cache", help="Cache directory")
     sp.add_argument("--email", help="Email for OpenAlex polite pool")
     sp.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
+    sp.add_argument("--include-neither", action="store_true",
+                    help="Include 'neither' annotations in pairwise agreement")
+    sp.add_argument("--neither-config", default=None,
+                    help="Path to YAML config with per-metric thresholds for 'neither' agreement")
     sp.add_argument("--output-dir", default="results", help="Output directory")
     sp.set_defaults(func=cmd_run_all)
 

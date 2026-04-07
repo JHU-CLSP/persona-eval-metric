@@ -1,0 +1,70 @@
+# Per-metric thresholds for "neither" (no preference) agreement.
+#
+# When --include-neither is enabled, a human annotation of "N" (neither
+# summary is better) is compared against the metric score difference.
+# If abs(metric(A) - metric(B)) < threshold, the metric "agrees" with
+# the human that neither summary is clearly better.
+#
+# Thresholds should reflect the scale and typical variance of each metric.
+# These are starting defaults — tune them based on your data.
+
+# Reference-based metrics (scored against concatenated titles)
+rouge1_f: 0.05
+rouge1_p: 0.05
+rouge1_r: 0.05
+rouge2_f: 0.03
+rouge2_p: 0.03
+rouge2_r: 0.03
+rougeL_f: 0.05
+rougeL_p: 0.05
+rougeL_r: 0.05
+bertscore_p: 0.02
+bertscore_r: 0.02
+bertscore_f: 0.02
+bleu: 2.0
+chrf: 2.0
+cider: 0.05
+meteor: 0.05
+
+# Reference-free metrics (scored against concatenated abstracts)
+supert: 0.05
+summaqa_avg_prob: 0.05
+summaqa_avg_fscore: 0.05
+blanc: 0.02
+
+# DataStats (reference-free)
+coverage: 0.05
+density: 0.1
+compression: 0.1
+summary_length: 5.0
+percentage_novel_1-gram: 0.05
+percentage_repeated_1-gram_in_summ: 0.01
+percentage_novel_2-gram: 0.05
+percentage_repeated_2-gram_in_summ: 0.01
+percentage_novel_3-gram: 0.05
+percentage_repeated_3-gram_in_summ: 0.01
+
+# Syntactic complexity (reference-free, summary-only)
+syn_words: 10.0
+syn_sentences: 1.0
+syn_verb_phrases: 2.0
+syn_clauses: 2.0
+syn_t_units: 1.0
+syn_dependent_clauses: 1.0
+syn_complex_t_units: 1.0
+syn_coordinate_phrases: 1.0
+syn_complex_nominals: 2.0
+syn_words_per_sentence: 3.0
+syn_words_per_t_unit: 3.0
+syn_words_per_clause: 2.0
+syn_clauses_per_sentence: 0.5
+syn_verb_phrases_per_t_unit: 0.5
+syn_clauses_per_t_unit: 0.5
+syn_dependent_clauses_per_clause: 0.1
+syn_dependent_clauses_per_t_unit: 0.2
+syn_t_units_per_sentence: 0.3
+syn_complex_t_units_per_t_unit: 0.2
+syn_coordinate_phrases_per_t_unit: 0.2
+syn_coordinate_phrases_per_clause: 0.1
+syn_complex_nominals_per_t_unit: 0.5
+syn_complex_nominals_per_clause: 0.3
