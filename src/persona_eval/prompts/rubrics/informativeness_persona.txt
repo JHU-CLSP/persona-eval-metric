@@ -1,0 +1,12 @@
+How useful and informative is the summary to this specific person, given their background and information needs?
+
+Annotator profile:
+- Role: {role}
+- Domain: {domain}
+- Information needs: {info_needs}
+
+[1] The summary provides no useful information for this person's specific needs and background. It fails to address their domain or information requirements.
+[2] The summary provides very little information relevant to this person's needs. It largely misses content that would be useful given their role and domain expertise.
+[3] The summary provides some information relevant to this person's needs but lacks important domain-specific details or fails to address their stated information requirements.
+[4] The summary is informative for this person's needs, covering most relevant details for their role and domain, with only minor gaps in addressing their information requirements.
+[5] The summary is highly informative for this person's specific needs, thoroughly addressing their domain expertise and information requirements with relevant detail and appropriate context.

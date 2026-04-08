@@ -231,10 +231,21 @@ Alternatively, pass the key directly with `--llm-api-key`.
 | `--llm-api-key` | API key (or use `TOGETHER_API_KEY` env var) | `EMPTY` for vLLM |
 | `--llm-base-url` | Override API base URL | `localhost:8000/v1` (vLLM) |
 | `--llm-prompt-file` | Custom prompt template for `llm_judge` | built-in default |
+| `--persona` | Enable persona-aware evaluation using annotator profiles | off |
+
+### Evaluation dimensions
+
+Both `llm_judge` and `llm_judge_relative` evaluate summaries on five dimensions:
+
+- **Relevance**: Does the summary capture key information from the source?
+- **Coherence**: Is the summary well-organized and easy to read?
+- **Consistency**: Is the summary factually consistent with the source?
+- **Fluency**: Is the summary grammatically correct and well-written?
+- **Informativeness**: How useful is the summary? (see [Persona-aware evaluation](#persona-aware-evaluation) for the persona variant)
 
 ### Absolute grading (default)
 
-The `llm_judge` metric uses the Prometheus absolute grading format. It makes one LLM call per dimension (relevance, coherence, consistency, fluency), each with its own rubric. Each call returns a 1-5 score via a `[RESULT]` tag. The overall score is the average across dimensions.
+The `llm_judge` metric uses the Prometheus absolute grading format. It makes one LLM call per dimension (relevance, coherence, consistency, fluency, informativeness), each with its own rubric. Each call returns a 1-5 score via a `[RESULT]` tag. The overall score is the average across dimensions.
 
 ```bash
 persona-eval compute-metrics annotations.zip \
@@ -247,8 +258,8 @@ persona-eval compute-metrics annotations.zip \
 
 The `llm_judge_relative` metric uses Prometheus relative grading to compare summaries head-to-head. It mirrors the human annotation tournament structure:
 
-1. **Round 1**: A vs B, C vs D (2 LLM calls per dimension)
-2. **Final**: winner of AB vs winner of CD (1 LLM call per dimension)
+1. **Round 1**: A vs B, C vs D (2 LLM calls per dimension × 5 dimensions)
+2. **Final**: winner of AB vs winner of CD (1 LLM call per dimension × 5 dimensions)
 
 Each summary receives tournament points based on progression:
 - **3 points**: won round 1 + won final
@@ -275,6 +286,32 @@ Both `llm_judge` and `llm_judge_relative` use configurable prompt templates. To 
 4. Pass your template with `--llm-prompt-file my_prompt.txt`
 
 Rubrics for each dimension live in `src/persona_eval/prompts/rubrics/` and can be edited independently.
+
+### Persona-aware evaluation
+
+The `--persona` flag enables persona-aware evaluation, where the LLM judges summaries from the perspective of each individual annotator using their profile (role, domain, information needs).
+
+```bash
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge \
+    --llm-provider vllm \
+    --llm-model prometheus-eval/prometheus-7b-v2.0 \
+    --persona
+```
+
+When `--persona` is enabled:
+
+- The **informativeness** rubric changes from general ("How useful is this summary?") to persona-specific ("How useful is this summary to this specific person?"), incorporating the annotator's role, domain, and information needs
+- The prompt template includes the annotator's profile so the LLM evaluates from their perspective
+- Scoring is **per-annotator**: the same summary may receive different scores for different annotators, since each has different information needs
+- All other dimensions (relevance, coherence, consistency, fluency) are also evaluated from the annotator's perspective
+
+Without `--persona`, the informativeness rubric evaluates general usefulness and scoring is deduplicated per (query, summary) as usual.
+
+Annotator profiles are loaded from `users.json` in the annotations directory, with fields:
+- `role`: the annotator's professional role
+- `domain`: their area of expertise
+- `info_needs`: what information they are looking for
 
 ### FACTScore
 
@@ -336,15 +373,19 @@ src/persona_eval/
 ├── correlation.py            # Pairwise agreement + rank correlation
 ├── llm_client.py             # Shared LLM client (vLLM / TogetherAI)
 ├── prompts/
-│   ├── llm_judge_default.txt   # Prometheus absolute grading prompt
-│   ├── llm_judge_relative.txt  # Prometheus relative grading prompt
-│   ├── factscore_extract.txt   # Atomic fact extraction prompt
-│   ├── factscore_verify.txt    # Fact verification prompt
-│   └── rubrics/                # Per-dimension scoring rubrics
+│   ├── llm_judge_default.txt          # Prometheus absolute grading prompt
+│   ├── llm_judge_persona.txt          # Persona-aware absolute grading prompt
+│   ├── llm_judge_relative.txt         # Prometheus relative grading prompt
+│   ├── llm_judge_relative_persona.txt # Persona-aware relative grading prompt
+│   ├── factscore_extract.txt          # Atomic fact extraction prompt
+│   ├── factscore_verify.txt           # Fact verification prompt
+│   └── rubrics/                       # Per-dimension scoring rubrics
 │       ├── relevance.txt
 │       ├── coherence.txt
 │       ├── consistency.txt
-│       └── fluency.txt
+│       ├── fluency.txt
+│       ├── informativeness.txt         # General informativeness
+│       └── informativeness_persona.txt # Persona-aware informativeness
 └── metrics/
     ├── __init__.py            # Registry imports
     ├── base.py                # BaseMetric ABC + @register_metric

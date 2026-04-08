@@ -1,0 +1,6 @@
+How useful and informative is the summary to a general reader?
+[1] The summary provides no useful information and fails to convey any meaningful content from the source.
+[2] The summary provides very little useful information, missing most details that would help a reader understand the source material.
+[3] The summary provides some useful information but lacks important details or context needed to fully understand the source.
+[4] The summary is informative and provides most of the useful details a reader would need, with only minor gaps.
+[5] The summary is highly informative, providing all the key details and context a reader would need to understand the source material without reading it.

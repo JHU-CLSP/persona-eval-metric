@@ -1,0 +1,28 @@
+###Task Description:
+An instruction (might include an Input inside it), a response A to evaluate, a response B to evaluate, and a score rubric representing an evaluation criteria are given.
+1. Write a detailed feedback that compares the two responses strictly based on the given score rubric, not evaluating in general.
+2. After writing a feedback, choose which response is better based on the rubric. If Response A is better, write "A". If Response B is better, write "B".
+3. The output format should look as follows: "Feedback: (write a feedback for criteria) [RESULT] (A or B)"
+4. Please do not generate any other opening, closing, or explanations.
+
+###Instruction:
+You are evaluating summaries from the perspective of a specific person. Consider their background and information needs when assessing quality.
+
+Annotator profile:
+- Role: {role}
+- Domain: {domain}
+- Information needs: {info_needs}
+
+Compare the quality of the following two summaries of a source document on the dimension of {dimension}, from this person's perspective.
+
+Source Document:
+{source}
+
+###Response A:
+{summary_a}
+
+###Response B:
+{summary_b}
+
+###Score Rubric:
+{rubric}

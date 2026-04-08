@@ -11,7 +11,12 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-from persona_eval.annotations import AnnotationEntry, load_annotations, get_pairwise_preferences
+from persona_eval.annotations import (
+    AnnotationEntry,
+    AnnotatorProfile,
+    load_annotations,
+    get_pairwise_preferences,
+)
 from persona_eval.correlation import (
     aggregate_correlations,
     compute_pairwise_agreement,
@@ -44,6 +49,17 @@ def cmd_fetch_sources(args):
 
 
 _LLM_METRICS = {"llm_judge", "llm_judge_relative", "factscore"}
+
+
+def _make_persona_kwargs(profile: AnnotatorProfile | None) -> dict | None:
+    """Build persona template kwargs from an annotator profile."""
+    if profile is None:
+        return None
+    return {
+        "role": profile.role or "unspecified",
+        "domain": profile.domain or "unspecified",
+        "info_needs": profile.info_needs or "unspecified",
+    }
 
 
 def _compute_pairwise_tournament(
@@ -84,11 +100,14 @@ def _compute_pairwise_tournament(
             l: {} for l in ("A", "B", "C", "D")
         }
 
+        pk = label_tasks["A"].get("persona_kwargs")
+
         # --- Round 1: A vs B ---
         result_ab = metric.score_pair(
             label_tasks["A"]["summary"],
             label_tasks["B"]["summary"],
             source,
+            persona_kwargs=pk,
         )
         if sub_metrics is None:
             sub_metrics = list(result_ab.keys())
@@ -100,6 +119,7 @@ def _compute_pairwise_tournament(
             label_tasks["C"]["summary"],
             label_tasks["D"]["summary"],
             source,
+            persona_kwargs=pk,
         )
 
         # Determine round winners per sub-metric and award points
@@ -147,6 +167,7 @@ def _compute_pairwise_tournament(
                 label_tasks[w_ab]["summary"],
                 label_tasks[w_cd]["summary"],
                 source,
+                persona_kwargs=pk,
             )
             for sm in sms:
                 pref_final = result_final[sm]
@@ -168,6 +189,53 @@ def _compute_pairwise_tournament(
     return rows
 
 
+def _build_tasks(
+    entries: list[AnnotationEntry],
+    source_texts: dict[int, str],
+    reference_texts: dict[int, str],
+    profiles_by_id: dict[str, AnnotatorProfile] | None = None,
+    per_annotator: bool = False,
+) -> list[dict]:
+    """Build deduplicated task list from annotation entries.
+
+    When ``per_annotator`` is True, tasks are deduplicated by
+    (annotator_id, query_index, label) and include persona info.
+    Otherwise, deduplicated by (query_index, label).
+    """
+    seen = set()
+    tasks = []
+    for entry in entries:
+        for label in ("A", "B", "C", "D"):
+            if label not in entry.summaries:
+                continue
+
+            if per_annotator:
+                key = (entry.annotator_id, entry.query_index, label)
+            else:
+                key = (entry.query_index, label)
+
+            if key in seen:
+                continue
+            seen.add(key)
+
+            task = {
+                "query_index": entry.query_index,
+                "label": label,
+                "summary": entry.summaries[label],
+                "source": source_texts.get(entry.query_index, ""),
+                "reference": reference_texts.get(entry.query_index, ""),
+            }
+
+            if per_annotator:
+                task["annotator_id"] = entry.annotator_id
+                profile = (profiles_by_id or {}).get(entry.annotator_id)
+                task["persona_kwargs"] = _make_persona_kwargs(profile)
+
+            tasks.append(task)
+
+    return tasks
+
+
 def _compute_metric_scores(
     entries: list[AnnotationEntry],
     source_texts: dict[int, str],
@@ -175,32 +243,30 @@ def _compute_metric_scores(
     metric_names: list[str],
     device: str = "cpu",
     llm_kwargs: dict | None = None,
+    profiles_by_id: dict[str, AnnotatorProfile] | None = None,
 ) -> pd.DataFrame:
     """Compute metric scores for all (query, summary) pairs.
 
     Reference-free metrics receive concatenated abstracts as their source.
     Reference-based metrics receive concatenated titles as their source.
-    Pairwise metrics compute win-rates across all pairs within each query.
-    """
-    # Deduplicate: compute once per unique (query_index, label)
-    seen = set()
-    tasks = []
-    for entry in entries:
-        for label in ("A", "B", "C", "D"):
-            key = (entry.query_index, label)
-            if key not in seen and label in entry.summaries:
-                seen.add(key)
-                tasks.append(
-                    {
-                        "query_index": entry.query_index,
-                        "label": label,
-                        "summary": entry.summaries[label],
-                        "source": source_texts.get(entry.query_index, ""),
-                        "reference": reference_texts.get(entry.query_index, ""),
-                    }
-                )
+    Pairwise metrics compute tournament scores within each query.
 
+    When a metric has ``needs_persona=True``, tasks are per-annotator
+    (not deduplicated across annotators) and include persona info.
+    """
     llm_kwargs = llm_kwargs or {}
+
+    # Pre-build both task lists (lazy — only build per-annotator if needed)
+    _tasks_cache: dict[bool, list[dict]] = {}
+
+    def get_tasks(per_annotator: bool) -> list[dict]:
+        if per_annotator not in _tasks_cache:
+            _tasks_cache[per_annotator] = _build_tasks(
+                entries, source_texts, reference_texts,
+                profiles_by_id=profiles_by_id,
+                per_annotator=per_annotator,
+            )
+        return _tasks_cache[per_annotator]
 
     rows = []
     for metric_name in metric_names:
@@ -210,27 +276,35 @@ def _compute_metric_scores(
             kwargs.update(llm_kwargs)
         metric = get_metric(metric_name, **kwargs)
         text_key = "source" if metric.is_reference_free else "reference"
+        tasks = get_tasks(per_annotator=metric.needs_persona)
 
         if metric.is_pairwise:
             rows.extend(_compute_pairwise_tournament(tasks, metric, text_key))
         else:
             for task in tqdm(tasks, desc=metric_name):
-                scores = metric.score(task["summary"], task[text_key])
-                rows.append(
-                    {
-                        "query_index": task["query_index"],
-                        "label": task["label"],
-                        **scores,
-                    }
+                pk = task.get("persona_kwargs")
+                scores = metric.score(
+                    task["summary"], task[text_key],
+                    persona_kwargs=pk,
                 )
+                row = {
+                    "query_index": task["query_index"],
+                    "label": task["label"],
+                    **scores,
+                }
+                if "annotator_id" in task:
+                    row["annotator_id"] = task["annotator_id"]
+                rows.append(row)
 
-    # Merge all metric scores into one row per (query_index, label)
+    # Merge all metric scores into one row per key
     if not rows:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    # Group by (query_index, label) and combine columns from different metrics
-    df = df.groupby(["query_index", "label"], as_index=False).first()
+    group_cols = ["query_index", "label"]
+    if "annotator_id" in df.columns:
+        group_cols.insert(0, "annotator_id")
+    df = df.groupby(group_cols, as_index=False).first()
     return df
 
 
@@ -242,6 +316,8 @@ def _collect_llm_kwargs(args) -> dict:
         val = getattr(args, attr, None)
         if val is not None:
             kwargs[key] = val
+    if getattr(args, "persona", False):
+        kwargs["persona"] = True
     return kwargs
 
 
@@ -268,11 +344,16 @@ def _add_llm_args(parser):
         "--llm-prompt-file",
         help="Path to custom prompt template for llm_judge metric",
     )
+    group.add_argument(
+        "--persona", action="store_true",
+        help="Enable persona-aware evaluation using annotator profiles",
+    )
 
 
 def cmd_compute_metrics(args):
     """Compute automatic metrics for all summaries."""
-    _, entries = load_annotations(args.annotations)
+    profiles, entries = load_annotations(args.annotations)
+    profiles_by_id = {p.annotator_id: p for p in profiles}
     client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
     source_texts, reference_texts = client.get_texts_batch(entries)
 
@@ -280,7 +361,8 @@ def cmd_compute_metrics(args):
     llm_kwargs = _collect_llm_kwargs(args)
     scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
                                         metric_names, device=args.device,
-                                        llm_kwargs=llm_kwargs)
+                                        llm_kwargs=llm_kwargs,
+                                        profiles_by_id=profiles_by_id)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -343,6 +425,7 @@ def cmd_run_all(args):
 
     # Load annotations
     profiles, entries = load_annotations(args.annotations)
+    profiles_by_id = {p.annotator_id: p for p in profiles}
     print(f"Loaded {len(entries)} annotations from {len(profiles)} annotators")
 
     # Fetch sources
@@ -355,7 +438,8 @@ def cmd_run_all(args):
     llm_kwargs = _collect_llm_kwargs(args)
     scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
                                         metric_names, device=args.device,
-                                        llm_kwargs=llm_kwargs)
+                                        llm_kwargs=llm_kwargs,
+                                        profiles_by_id=profiles_by_id)
     scores_path = output_dir / "metric_scores.csv"
     scores_df.to_csv(scores_path, index=False)
     print(f"Saved metric scores to {scores_path}")

@@ -51,6 +51,11 @@ class BaseMetric(ABC):
         return True
 
     @property
+    def needs_persona(self) -> bool:
+        """Whether this metric requires annotator profile information."""
+        return False
+
+    @property
     def is_pairwise(self) -> bool:
         """Whether this metric compares pairs of summaries (relative grading).
 

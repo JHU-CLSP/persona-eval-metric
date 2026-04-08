@@ -2,9 +2,10 @@
 
 Compares two summaries side-by-side for each dimension and returns a
 preference ("A" or "B"). The pipeline converts these pairwise preferences
-into per-summary win-rate scores.
+into tournament scores matching the human annotation structure.
 
 Supports local vLLM and TogetherAI backends via the shared LLM client.
+When ``--persona`` is enabled, uses persona-aware prompts and rubrics.
 """
 
 from __future__ import annotations
@@ -19,20 +20,26 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _DEFAULT_RELATIVE_PROMPT_PATH = _PROMPTS_DIR / "llm_judge_relative.txt"
+_PERSONA_RELATIVE_PROMPT_PATH = _PROMPTS_DIR / "llm_judge_relative_persona.txt"
 _RUBRICS_DIR = _PROMPTS_DIR / "rubrics"
 
-_SCORE_DIMENSIONS = ("relevance", "coherence", "consistency", "fluency")
+_BASE_DIMENSIONS = ("relevance", "coherence", "consistency", "fluency")
+_ALL_DIMENSIONS = _BASE_DIMENSIONS + ("informativeness",)
 
 # Matches "[RESULT] A" or "[RESULT] B" with optional whitespace
 _RESULT_RE = re.compile(r"\[RESULT\]\s*([ABab])")
 
 
-def _load_prompt_template(prompt_file: str | None = None) -> str:
-    path = Path(prompt_file) if prompt_file else _DEFAULT_RELATIVE_PROMPT_PATH
+def _load_prompt_template(prompt_file: str | None, persona: bool = False) -> str:
+    if prompt_file:
+        return Path(prompt_file).read_text()
+    path = _PERSONA_RELATIVE_PROMPT_PATH if persona else _DEFAULT_RELATIVE_PROMPT_PATH
     return path.read_text()
 
 
-def _load_rubric(dimension: str) -> str:
+def _load_rubric(dimension: str, persona: bool = False) -> str:
+    if persona and dimension == "informativeness":
+        return (_RUBRICS_DIR / "informativeness_persona.txt").read_text()
     return (_RUBRICS_DIR / f"{dimension}.txt").read_text()
 
 
@@ -48,9 +55,10 @@ class LLMJudgeRelativeMetric(BaseMetric):
 
     Compares two summaries per LLM call for each evaluation dimension.
     Returns ``"A"`` or ``"B"`` per dimension. The pipeline computes
-    win-rates across all pairs within a query to produce per-summary scores.
+    tournament scores matching the human annotation structure.
 
     Reuses the same rubric files as the absolute ``llm_judge`` metric.
+    When ``persona=True``, uses persona-aware prompts and rubrics.
     """
 
     def __init__(
@@ -60,14 +68,18 @@ class LLMJudgeRelativeMetric(BaseMetric):
         api_key: str | None = None,
         base_url: str | None = None,
         prompt_file: str | None = None,
+        persona: bool = False,
         **kwargs,
     ):
         self._provider = provider
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
-        self._prompt_template = _load_prompt_template(prompt_file)
-        self._rubrics = {dim: _load_rubric(dim) for dim in _SCORE_DIMENSIONS}
+        self._persona = persona
+        self._prompt_template = _load_prompt_template(prompt_file, persona=persona)
+        self._rubrics = {
+            dim: _load_rubric(dim, persona=persona) for dim in _ALL_DIMENSIONS
+        }
         self._client = None
 
     @property
@@ -82,6 +94,10 @@ class LLMJudgeRelativeMetric(BaseMetric):
     def is_pairwise(self) -> bool:
         return True
 
+    @property
+    def needs_persona(self) -> bool:
+        return self._persona
+
     def _load(self):
         if self._client is None:
             from persona_eval.llm_client import LLMClient
@@ -93,27 +109,36 @@ class LLMJudgeRelativeMetric(BaseMetric):
                 base_url=self._base_url,
             )
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
-        """Not used for pairwise metrics — raises an error.
-
-        Use ``score_pair()`` instead, or let the pipeline compute win-rates.
-        """
+    def score(self, summary: str, source: str, **kwargs) -> dict[str, float]:
+        """Not used for pairwise metrics — raises an error."""
         raise NotImplementedError(
             "llm_judge_relative is a pairwise metric. "
-            "Use score_pair() or let the pipeline compute win-rates."
+            "Use score_pair() or let the pipeline compute tournament scores."
         )
 
     def _compare_dimension(
-        self, summary_a: str, summary_b: str, source: str, dimension: str,
+        self,
+        summary_a: str,
+        summary_b: str,
+        source: str,
+        dimension: str,
+        persona_kwargs: dict | None = None,
     ) -> str:
         """Compare two summaries on one dimension. Returns 'A', 'B', or 'tie'."""
-        prompt = self._prompt_template.format(
-            summary_a=summary_a,
-            summary_b=summary_b,
-            source=source,
-            dimension=dimension,
-            rubric=self._rubrics[dimension],
+        rubric = self._rubrics[dimension]
+        fmt = dict(
+            summary_a=summary_a, summary_b=summary_b,
+            source=source, dimension=dimension,
         )
+
+        pk = persona_kwargs or {}
+        if pk:
+            rubric = rubric.format(**pk)
+            fmt.update(pk)
+
+        fmt["rubric"] = rubric
+
+        prompt = self._prompt_template.format(**fmt)
         response_text = self._client.generate(prompt)
         result = _parse_pairwise_result(response_text)
         if result is None:
@@ -124,7 +149,11 @@ class LLMJudgeRelativeMetric(BaseMetric):
         return result
 
     def score_pair(
-        self, summary_a: str, summary_b: str, source: str,
+        self,
+        summary_a: str,
+        summary_b: str,
+        source: str,
+        persona_kwargs: dict | None = None,
     ) -> dict[str, str]:
         """Compare two summaries on all dimensions.
 
@@ -134,10 +163,11 @@ class LLMJudgeRelativeMetric(BaseMetric):
         self._load()
 
         results = {}
-        for dim in _SCORE_DIMENSIONS:
+        for dim in _ALL_DIMENSIONS:
             try:
                 results[f"llm_judge_rel_{dim}"] = self._compare_dimension(
                     summary_a, summary_b, source, dim,
+                    persona_kwargs=persona_kwargs,
                 )
             except Exception:
                 logger.warning(
