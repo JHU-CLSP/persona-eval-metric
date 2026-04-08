@@ -135,6 +135,30 @@ bleu: 2.0
 
 A default config covering all metrics is provided in `neither_thresholds.yaml`.
 
+## Strict pairwise agreement
+
+By default, pairwise agreement evaluates each comparison independently. With `--strict-pairwise`, the final-round comparison automatically counts as disagreement if the metric got any round 1 comparison wrong for that annotator and query.
+
+This reflects the logic that if a metric picks the wrong winner in A vs B or C vs D, the final comparison (between round winners) is meaningless — even if the metric happens to agree with the human's final choice, it arrived there via the wrong path.
+
+```bash
+# With correlate
+persona-eval correlate annotations.zip --scores metric_scores.csv --strict-pairwise
+
+# With run-all
+persona-eval run-all annotations.zip --strict-pairwise --output-dir results/
+```
+
+Can be combined with `--include-neither`:
+
+```bash
+persona-eval run-all annotations.zip \
+    --strict-pairwise \
+    --include-neither \
+    --neither-config neither_thresholds.yaml \
+    --output-dir results/
+```
+
 ## Available metrics
 
 | Metric | Name | Type | Compared against |
@@ -221,7 +245,16 @@ persona-eval compute-metrics annotations.zip \
 
 ### Relative grading (pairwise)
 
-The `llm_judge_relative` metric uses Prometheus relative grading to compare summaries head-to-head. For each query, it runs all-pairs comparisons (6 pairs for 4 summaries) across all dimensions and produces a win-rate score (0-1) per summary. Ties count as 0.5 for each side.
+The `llm_judge_relative` metric uses Prometheus relative grading to compare summaries head-to-head. It mirrors the human annotation tournament structure:
+
+1. **Round 1**: A vs B, C vs D (2 LLM calls per dimension)
+2. **Final**: winner of AB vs winner of CD (1 LLM call per dimension)
+
+Each summary receives tournament points based on progression:
+- **3 points**: won round 1 + won final
+- **1 point**: won round 1, lost final
+- **0 points**: lost in round 1
+- Ties award 0.5 to each side in that round
 
 ```bash
 persona-eval compute-metrics annotations.zip \
@@ -230,7 +263,7 @@ persona-eval compute-metrics annotations.zip \
     --llm-model prometheus-eval/prometheus-7b-v2.0
 ```
 
-The win-rate scores plug directly into the existing correlation pipeline, so pairwise agreement and rank correlation are computed the same way as for absolute metrics.
+The tournament scores plug directly into the existing correlation pipeline, so pairwise agreement and rank correlation are computed the same way as for absolute metrics. This structure ensures that the LLM comparisons match the same pairs the human annotators evaluated.
 
 ### Custom judge prompts
 
@@ -288,7 +321,7 @@ The metric is now available via `--metrics my_metric` on the CLI.
 
 ## How correlation is computed
 
-**Pairwise agreement** (primary measure): For each human preference (e.g., "A is better than B"), check whether the metric assigns a higher score to A than B. Reports the fraction of agreements across all comparisons.
+**Pairwise agreement** (primary measure): For each human preference (e.g., "A is better than B"), check whether the metric assigns a higher score to A than B. Reports the fraction of agreements across all comparisons. With `--strict-pairwise`, final-round comparisons automatically count as disagreement if the metric got any round 1 comparison wrong for that annotator/query.
 
 **Rank correlation** (complementary measure): For each query, derive a human ranking from the preference data (final winner = rank 1, round winners = rank 2, rest = rank 3.5). Compute Kendall's tau-b and Spearman's rho against the metric's ranking. Results are aggregated (mean, median, std) across all queries.
 

@@ -12,10 +12,83 @@ from scipy import stats
 logger = logging.getLogger(__name__)
 
 
+def _check_preference_agreement(
+    row: pd.Series,
+    metric_col: str,
+    metric_scores: pd.DataFrame,
+    threshold: float | None,
+) -> float | None:
+    """Check if a metric agrees with a single human preference.
+
+    Returns:
+        1.0 for agreement, 0.5 for tie, 0.0 for disagreement,
+        or None if the comparison should be skipped (missing data).
+    """
+    qi = row["query_index"]
+    pref_label = row["preferred"]
+
+    if pref_label == "N":
+        if threshold is None:
+            return None
+
+        label_a = row["other"]
+        label_b = row.get("pair_b")
+        if pd.isna(label_b) if label_b is None else not label_b:
+            return None
+
+        scores_a = metric_scores[
+            (metric_scores["query_index"] == qi)
+            & (metric_scores["label"] == label_a)
+        ]
+        scores_b = metric_scores[
+            (metric_scores["query_index"] == qi)
+            & (metric_scores["label"] == label_b)
+        ]
+
+        if scores_a.empty or scores_b.empty:
+            return None
+
+        val_a = scores_a[metric_col].iloc[0]
+        val_b = scores_b[metric_col].iloc[0]
+
+        if pd.isna(val_a) or pd.isna(val_b):
+            return None
+
+        return 1.0 if abs(val_a - val_b) < threshold else 0.0
+    else:
+        other_label = row["other"]
+
+        pref_scores = metric_scores[
+            (metric_scores["query_index"] == qi)
+            & (metric_scores["label"] == pref_label)
+        ]
+        other_scores = metric_scores[
+            (metric_scores["query_index"] == qi)
+            & (metric_scores["label"] == other_label)
+        ]
+
+        if pref_scores.empty or other_scores.empty:
+            return None
+
+        pref_val = pref_scores[metric_col].iloc[0]
+        other_val = other_scores[metric_col].iloc[0]
+
+        if pd.isna(pref_val) or pd.isna(other_val):
+            return None
+
+        if pref_val > other_val:
+            return 1.0
+        elif pref_val == other_val:
+            return 0.5
+        else:
+            return 0.0
+
+
 def compute_pairwise_agreement(
     preferences: pd.DataFrame,
     metric_scores: pd.DataFrame,
     neither_thresholds: dict[str, float] | None = None,
+    strict: bool = False,
 ) -> pd.DataFrame:
     """Compute how often each metric agrees with human pairwise preferences.
 
@@ -30,6 +103,11 @@ def compute_pairwise_agreement(
             thresholds. For "neither" annotations, the metric agrees if
             abs(score_a - score_b) < threshold. If a metric has no threshold
             configured, "neither" rows are skipped for that metric.
+        strict: If True, final-round comparisons automatically count as
+            disagreement when the metric disagreed with any round1
+            comparison for the same (annotator, query). This enforces
+            that the metric must get the earlier rounds right before the
+            final can count as agreement.
 
     Returns:
         DataFrame with columns: metric, n_comparisons, n_agreements, agreement_rate
@@ -48,68 +126,37 @@ def compute_pairwise_agreement(
         n_total = 0
         threshold = neither_thresholds.get(metric_col)
 
+        # In strict mode, first pass: check round1 agreement
+        # Key: (annotator_id, query_index) -> bool (all round1 agreed?)
+        round1_agreed: dict[tuple, bool] = {}
+        if strict:
+            round1_rows = preferences[preferences["comparison_type"] == "round1"]
+            for _, row in round1_rows.iterrows():
+                key = (row["annotator_id"], row["query_index"])
+                result = _check_preference_agreement(
+                    row, metric_col, metric_scores, threshold
+                )
+                if result is not None and result < 1.0:
+                    round1_agreed[key] = False
+                elif key not in round1_agreed:
+                    round1_agreed[key] = result is None or result >= 1.0
+
         for _, row in preferences.iterrows():
-            qi = row["query_index"]
-            pref_label = row["preferred"]
+            result = _check_preference_agreement(
+                row, metric_col, metric_scores, threshold
+            )
+            if result is None:
+                continue
 
-            if pref_label == "N":
-                # "Neither" annotation — check if metric score diff is small
-                if threshold is None:
-                    continue  # no threshold configured, skip
+            n_total += 1
 
-                label_a = row["other"]
-                label_b = row.get("pair_b")
-                if pd.isna(label_b) if label_b is None else not label_b:
+            if strict and row.get("comparison_type") == "final":
+                key = (row["annotator_id"], row["query_index"])
+                if not round1_agreed.get(key, True):
+                    # Auto-disagree: round1 was wrong, final cannot agree
                     continue
 
-                scores_a = metric_scores[
-                    (metric_scores["query_index"] == qi)
-                    & (metric_scores["label"] == label_a)
-                ]
-                scores_b = metric_scores[
-                    (metric_scores["query_index"] == qi)
-                    & (metric_scores["label"] == label_b)
-                ]
-
-                if scores_a.empty or scores_b.empty:
-                    continue
-
-                val_a = scores_a[metric_col].iloc[0]
-                val_b = scores_b[metric_col].iloc[0]
-
-                if pd.isna(val_a) or pd.isna(val_b):
-                    continue
-
-                n_total += 1
-                if abs(val_a - val_b) < threshold:
-                    n_agree += 1
-            else:
-                # Standard preference annotation
-                other_label = row["other"]
-
-                pref_scores = metric_scores[
-                    (metric_scores["query_index"] == qi)
-                    & (metric_scores["label"] == pref_label)
-                ]
-                other_scores = metric_scores[
-                    (metric_scores["query_index"] == qi)
-                    & (metric_scores["label"] == other_label)
-                ]
-
-                if pref_scores.empty or other_scores.empty:
-                    continue
-
-                pref_val = pref_scores[metric_col].iloc[0]
-                other_val = other_scores[metric_col].iloc[0]
-
-                if pd.isna(pref_val) or pd.isna(other_val):
-                    continue
-
-                n_total += 1
-                if pref_val > other_val:
-                    n_agree += 1
-                elif pref_val == other_val:
-                    n_agree += 0.5  # Tie counts as half agreement
+            n_agree += result
 
         results.append(
             {

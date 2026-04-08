@@ -93,12 +93,14 @@ llm_judge_consistency: 0.5
 llm_judge_fluency: 0.5
 llm_judge_overall: 0.5
 
-# LLM Judge Relative (reference-free) — range [0, 1] win-rate across pairwise comparisons
-llm_judge_rel_relevance: 0.1
-llm_judge_rel_coherence: 0.1
-llm_judge_rel_consistency: 0.1
-llm_judge_rel_fluency: 0.1
-llm_judge_rel_overall: 0.1
+# LLM Judge Relative (reference-free) — range [0, 3] tournament points
+#   0 = lost in round 1, 0.5 = tied in round 1 then lost, 1 = won round 1 then lost final,
+#   2 = lost round 1 tie + won final tie, 3 = won round 1 + won final
+llm_judge_rel_relevance: 0.5
+llm_judge_rel_coherence: 0.5
+llm_judge_rel_consistency: 0.5
+llm_judge_rel_fluency: 0.5
+llm_judge_rel_overall: 0.5
 
 # FACTScore (reference-free) — range [0, 1] fraction of supported atomic facts
 factscore: 0.1

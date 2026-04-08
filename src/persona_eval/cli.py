@@ -46,68 +46,124 @@ def cmd_fetch_sources(args):
 _LLM_METRICS = {"llm_judge", "llm_judge_relative", "factscore"}
 
 
-def _compute_pairwise_win_rates(
+def _compute_pairwise_tournament(
     tasks: list[dict],
     metric,
     text_key: str,
 ) -> list[dict]:
-    """Compute win-rate scores for a pairwise metric.
+    """Compute tournament scores for a pairwise metric.
 
-    For each query, runs all-pairs comparisons between summaries and
-    returns a win-rate (wins / comparisons) per summary per sub-metric.
-    Ties count as 0.5 for each side.
+    Mirrors the human annotation tournament structure:
+      Round 1: A vs B, C vs D
+      Final:   winner of AB vs winner of CD
+
+    Each summary receives a score based on tournament progression:
+      - Final winner: 3 points (won round + won final)
+      - Final loser:  1 point  (won round, lost final)
+      - Round losers: 0 points
+      - Ties award 0.5 to each side in that round
+
+    These scores integrate naturally with the existing correlation
+    pipeline (pairwise agreement and rank correlation).
     """
-    from itertools import combinations
-
-    # Group tasks by query_index
-    by_query: dict[int, list[dict]] = {}
+    # Group tasks by query_index, keyed by label
+    by_query: dict[int, dict[str, dict]] = {}
     for task in tasks:
-        by_query.setdefault(task["query_index"], []).append(task)
+        by_query.setdefault(task["query_index"], {})[task["label"]] = task
 
     rows = []
-    for qi, query_tasks in tqdm(by_query.items(), desc=metric.name):
-        if len(query_tasks) < 2:
+    for qi, label_tasks in tqdm(by_query.items(), desc=metric.name):
+        # Need all four summaries for the tournament
+        if not all(l in label_tasks for l in ("A", "B", "C", "D")):
             continue
 
-        # Initialise win counters per (label, sub-metric)
-        wins: dict[str, dict[str, float]] = {}
-        counts: dict[str, dict[str, int]] = {}
+        source = label_tasks["A"][text_key]
         sub_metrics = None
+        # Per-label, per-sub-metric scores
+        scores: dict[str, dict[str, float]] = {
+            l: {} for l in ("A", "B", "C", "D")
+        }
 
-        for ta, tb in combinations(query_tasks, 2):
-            result = metric.score_pair(
-                ta["summary"], tb["summary"], ta[text_key],
+        # --- Round 1: A vs B ---
+        result_ab = metric.score_pair(
+            label_tasks["A"]["summary"],
+            label_tasks["B"]["summary"],
+            source,
+        )
+        if sub_metrics is None:
+            sub_metrics = list(result_ab.keys())
+            for l in ("A", "B", "C", "D"):
+                scores[l] = {sm: 0.0 for sm in sub_metrics}
+
+        # --- Round 1: C vs D ---
+        result_cd = metric.score_pair(
+            label_tasks["C"]["summary"],
+            label_tasks["D"]["summary"],
+            source,
+        )
+
+        # Determine round winners per sub-metric and award points
+        ab_winners: dict[str, str] = {}  # sub-metric -> "A", "B", or "tie"
+        cd_winners: dict[str, str] = {}
+
+        for sm in sub_metrics:
+            # A vs B
+            pref_ab = result_ab[sm]
+            if pref_ab == "A":
+                scores["A"][sm] += 1.0
+                ab_winners[sm] = "A"
+            elif pref_ab == "B":
+                scores["B"][sm] += 1.0
+                ab_winners[sm] = "B"
+            else:
+                scores["A"][sm] += 0.5
+                scores["B"][sm] += 0.5
+                ab_winners[sm] = "A"  # tiebreak: first label advances
+
+            # C vs D
+            pref_cd = result_cd[sm]
+            if pref_cd == "A":  # "A" means first arg = C
+                scores["C"][sm] += 1.0
+                cd_winners[sm] = "C"
+            elif pref_cd == "B":  # "B" means second arg = D
+                scores["D"][sm] += 1.0
+                cd_winners[sm] = "D"
+            else:
+                scores["C"][sm] += 0.5
+                scores["D"][sm] += 0.5
+                cd_winners[sm] = "C"  # tiebreak: first label advances
+
+        # --- Final: winner of AB vs winner of CD ---
+        # We need to run the final for each sub-metric's winners.
+        # Group sub-metrics by the same (ab_winner, cd_winner) pair to
+        # minimise LLM calls.
+        final_pairs: dict[tuple[str, str], list[str]] = {}
+        for sm in sub_metrics:
+            pair = (ab_winners[sm], cd_winners[sm])
+            final_pairs.setdefault(pair, []).append(sm)
+
+        for (w_ab, w_cd), sms in final_pairs.items():
+            result_final = metric.score_pair(
+                label_tasks[w_ab]["summary"],
+                label_tasks[w_cd]["summary"],
+                source,
             )
-            if sub_metrics is None:
-                sub_metrics = list(result.keys())
-                for t in query_tasks:
-                    wins[t["label"]] = {sm: 0.0 for sm in sub_metrics}
-                    counts[t["label"]] = {sm: 0 for sm in sub_metrics}
+            for sm in sms:
+                pref_final = result_final[sm]
+                if pref_final == "A":  # first arg = AB winner
+                    scores[w_ab][sm] += 2.0
+                elif pref_final == "B":  # second arg = CD winner
+                    scores[w_cd][sm] += 2.0
+                else:
+                    scores[w_ab][sm] += 1.0
+                    scores[w_cd][sm] += 1.0
 
-            for sm, pref in result.items():
-                counts[ta["label"]][sm] += 1
-                counts[tb["label"]][sm] += 1
-                if pref == "A":
-                    wins[ta["label"]][sm] += 1.0
-                elif pref == "B":
-                    wins[tb["label"]][sm] += 1.0
-                else:  # tie
-                    wins[ta["label"]][sm] += 0.5
-                    wins[tb["label"]][sm] += 0.5
-
-        for task in query_tasks:
-            label = task["label"]
-            if sub_metrics and label in wins:
-                scores = {
-                    sm: wins[label][sm] / counts[label][sm]
-                    if counts[label][sm] > 0 else float("nan")
-                    for sm in sub_metrics
-                }
-                rows.append({
-                    "query_index": qi,
-                    "label": label,
-                    **scores,
-                })
+        for label in ("A", "B", "C", "D"):
+            rows.append({
+                "query_index": qi,
+                "label": label,
+                **scores[label],
+            })
 
     return rows
 
@@ -156,7 +212,7 @@ def _compute_metric_scores(
         text_key = "source" if metric.is_reference_free else "reference"
 
         if metric.is_pairwise:
-            rows.extend(_compute_pairwise_win_rates(tasks, metric, text_key))
+            rows.extend(_compute_pairwise_tournament(tasks, metric, text_key))
         else:
             for task in tqdm(tasks, desc=metric_name):
                 scores = metric.score(task["summary"], task[text_key])
@@ -255,14 +311,19 @@ def cmd_correlate(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    strict = getattr(args, "strict_pairwise", False)
+
     # Pairwise agreement
     agreement = compute_pairwise_agreement(
         preferences, scores_df, neither_thresholds=neither_thresholds,
+        strict=strict,
     )
     agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
     print("\n=== Pairwise Agreement ===")
     if include_neither:
         print(f"(including 'neither' annotations with thresholds from {neither_config})")
+    if strict:
+        print("(strict mode: final disagreement when round1 is wrong)")
     print(agreement.to_string(index=False))
 
     # Rank correlation
@@ -304,10 +365,12 @@ def cmd_run_all(args):
     neither_config = getattr(args, "neither_config", None)
     neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
 
+    strict = getattr(args, "strict_pairwise", False)
     preferences = get_pairwise_preferences(entries, include_neither=include_neither)
 
     agreement = compute_pairwise_agreement(
         preferences, scores_df, neither_thresholds=neither_thresholds,
+        strict=strict,
     )
     agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
 
@@ -371,6 +434,8 @@ def main():
                     help="Include 'neither' annotations in pairwise agreement")
     sp.add_argument("--neither-config", default=None,
                     help="Path to YAML config with per-metric thresholds for 'neither' agreement")
+    sp.add_argument("--strict-pairwise", action="store_true",
+                    help="Strict mode: auto-disagree on final when metric got round1 wrong")
     sp.add_argument("--output-dir", default="results", help="Output directory")
     sp.set_defaults(func=cmd_correlate)
 
@@ -385,6 +450,8 @@ def main():
                     help="Include 'neither' annotations in pairwise agreement")
     sp.add_argument("--neither-config", default=None,
                     help="Path to YAML config with per-metric thresholds for 'neither' agreement")
+    sp.add_argument("--strict-pairwise", action="store_true",
+                    help="Strict mode: auto-disagree on final when metric got round1 wrong")
     sp.add_argument("--output-dir", default="results", help="Output directory")
     _add_llm_args(sp)
     sp.set_defaults(func=cmd_run_all)
