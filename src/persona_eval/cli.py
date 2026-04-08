@@ -62,40 +62,42 @@ def _make_persona_kwargs(profile: AnnotatorProfile | None) -> dict | None:
     }
 
 
-def _compute_pairwise_tournament(
+def _run_pairwise_comparisons(
     tasks: list[dict],
     metric,
     text_key: str,
-) -> list[dict]:
-    """Compute tournament scores for a pairwise metric.
+) -> tuple[list[dict], list[dict]]:
+    """Run pairwise comparisons mirroring the human annotation tournament.
 
     Mirrors the human annotation tournament structure:
       Round 1: A vs B, C vs D
       Final:   winner of AB vs winner of CD
 
-    Each summary receives a score based on tournament progression:
-      - Final winner: 3 points (won round + won final)
-      - Final loser:  1 point  (won round, lost final)
-      - Round losers: 0 points
-      - Ties award 0.5 to each side in that round
+    Returns:
+        Tuple of (raw_preferences, tournament_scores).
 
-    These scores integrate naturally with the existing correlation
-    pipeline (pairwise agreement and rank correlation).
+        raw_preferences: list of dicts with columns query_index,
+            comparison ("round1_ab", "round1_cd", "final"), and one
+            column per sub-metric containing the winning label
+            ("A"/"B"/"C"/"D") or "tie".
+
+        tournament_scores: list of per-(query, label) dicts with
+            tournament point columns for rank correlation.
     """
     # Group tasks by query_index, keyed by label
     by_query: dict[int, dict[str, dict]] = {}
     for task in tasks:
         by_query.setdefault(task["query_index"], {})[task["label"]] = task
 
-    rows = []
+    raw_prefs = []
+    score_rows = []
+
     for qi, label_tasks in tqdm(by_query.items(), desc=metric.name):
-        # Need all four summaries for the tournament
         if not all(l in label_tasks for l in ("A", "B", "C", "D")):
             continue
 
         source = label_tasks["A"][text_key]
         sub_metrics = None
-        # Per-label, per-sub-metric scores
         scores: dict[str, dict[str, float]] = {
             l: {} for l in ("A", "B", "C", "D")
         }
@@ -122,9 +124,11 @@ def _compute_pairwise_tournament(
             persona_kwargs=pk,
         )
 
-        # Determine round winners per sub-metric and award points
-        ab_winners: dict[str, str] = {}  # sub-metric -> "A", "B", or "tie"
+        # Translate score_pair results ("A"/"B") to actual labels and store
+        ab_winners: dict[str, str] = {}
         cd_winners: dict[str, str] = {}
+        pref_ab_row = {"query_index": qi, "comparison": "round1_ab"}
+        pref_cd_row = {"query_index": qi, "comparison": "round1_cd"}
 
         for sm in sub_metrics:
             # A vs B
@@ -132,35 +136,43 @@ def _compute_pairwise_tournament(
             if pref_ab == "A":
                 scores["A"][sm] += 1.0
                 ab_winners[sm] = "A"
+                pref_ab_row[sm] = "A"
             elif pref_ab == "B":
                 scores["B"][sm] += 1.0
                 ab_winners[sm] = "B"
+                pref_ab_row[sm] = "B"
             else:
                 scores["A"][sm] += 0.5
                 scores["B"][sm] += 0.5
-                ab_winners[sm] = "A"  # tiebreak: first label advances
+                ab_winners[sm] = "A"  # tiebreak
+                pref_ab_row[sm] = "tie"
 
             # C vs D
             pref_cd = result_cd[sm]
-            if pref_cd == "A":  # "A" means first arg = C
+            if pref_cd == "A":  # first arg = C
                 scores["C"][sm] += 1.0
                 cd_winners[sm] = "C"
-            elif pref_cd == "B":  # "B" means second arg = D
+                pref_cd_row[sm] = "C"
+            elif pref_cd == "B":  # second arg = D
                 scores["D"][sm] += 1.0
                 cd_winners[sm] = "D"
+                pref_cd_row[sm] = "D"
             else:
                 scores["C"][sm] += 0.5
                 scores["D"][sm] += 0.5
-                cd_winners[sm] = "C"  # tiebreak: first label advances
+                cd_winners[sm] = "C"  # tiebreak
+                pref_cd_row[sm] = "tie"
+
+        raw_prefs.append(pref_ab_row)
+        raw_prefs.append(pref_cd_row)
 
         # --- Final: winner of AB vs winner of CD ---
-        # We need to run the final for each sub-metric's winners.
-        # Group sub-metrics by the same (ab_winner, cd_winner) pair to
-        # minimise LLM calls.
         final_pairs: dict[tuple[str, str], list[str]] = {}
         for sm in sub_metrics:
             pair = (ab_winners[sm], cd_winners[sm])
             final_pairs.setdefault(pair, []).append(sm)
+
+        pref_final_row = {"query_index": qi, "comparison": "final"}
 
         for (w_ab, w_cd), sms in final_pairs.items():
             result_final = metric.score_pair(
@@ -173,20 +185,25 @@ def _compute_pairwise_tournament(
                 pref_final = result_final[sm]
                 if pref_final == "A":  # first arg = AB winner
                     scores[w_ab][sm] += 2.0
+                    pref_final_row[sm] = w_ab
                 elif pref_final == "B":  # second arg = CD winner
                     scores[w_cd][sm] += 2.0
+                    pref_final_row[sm] = w_cd
                 else:
                     scores[w_ab][sm] += 1.0
                     scores[w_cd][sm] += 1.0
+                    pref_final_row[sm] = "tie"
+
+        raw_prefs.append(pref_final_row)
 
         for label in ("A", "B", "C", "D"):
-            rows.append({
+            score_rows.append({
                 "query_index": qi,
                 "label": label,
                 **scores[label],
             })
 
-    return rows
+    return raw_prefs, score_rows
 
 
 def _build_tasks(
@@ -244,19 +261,22 @@ def _compute_metric_scores(
     device: str = "cpu",
     llm_kwargs: dict | None = None,
     profiles_by_id: dict[str, AnnotatorProfile] | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute metric scores for all (query, summary) pairs.
 
     Reference-free metrics receive concatenated abstracts as their source.
     Reference-based metrics receive concatenated titles as their source.
-    Pairwise metrics compute tournament scores within each query.
+    Pairwise metrics run a tournament and store both raw preferences
+    and tournament point scores.
 
-    When a metric has ``needs_persona=True``, tasks are per-annotator
-    (not deduplicated across annotators) and include persona info.
+    Returns:
+        Tuple of (scores_df, pairwise_prefs_df).
+        scores_df: per-(query, label) metric scores (for all metrics).
+        pairwise_prefs_df: raw LLM pairwise preferences per comparison,
+            or None if no pairwise metrics were run.
     """
     llm_kwargs = llm_kwargs or {}
 
-    # Pre-build both task lists (lazy — only build per-annotator if needed)
     _tasks_cache: dict[bool, list[dict]] = {}
 
     def get_tasks(per_annotator: bool) -> list[dict]:
@@ -269,6 +289,8 @@ def _compute_metric_scores(
         return _tasks_cache[per_annotator]
 
     rows = []
+    all_raw_prefs = []
+
     for metric_name in metric_names:
         print(f"Computing {metric_name}...")
         kwargs = {"device": device}
@@ -279,7 +301,11 @@ def _compute_metric_scores(
         tasks = get_tasks(per_annotator=metric.needs_persona)
 
         if metric.is_pairwise:
-            rows.extend(_compute_pairwise_tournament(tasks, metric, text_key))
+            raw_prefs, score_rows = _run_pairwise_comparisons(
+                tasks, metric, text_key,
+            )
+            all_raw_prefs.extend(raw_prefs)
+            rows.extend(score_rows)
         else:
             for task in tqdm(tasks, desc=metric_name):
                 pk = task.get("persona_kwargs")
@@ -298,14 +324,17 @@ def _compute_metric_scores(
 
     # Merge all metric scores into one row per key
     if not rows:
-        return pd.DataFrame()
+        scores_df = pd.DataFrame()
+    else:
+        scores_df = pd.DataFrame(rows)
+        group_cols = ["query_index", "label"]
+        if "annotator_id" in scores_df.columns:
+            group_cols.insert(0, "annotator_id")
+        scores_df = scores_df.groupby(group_cols, as_index=False).first()
 
-    df = pd.DataFrame(rows)
-    group_cols = ["query_index", "label"]
-    if "annotator_id" in df.columns:
-        group_cols.insert(0, "annotator_id")
-    df = df.groupby(group_cols, as_index=False).first()
-    return df
+    pairwise_prefs_df = pd.DataFrame(all_raw_prefs) if all_raw_prefs else None
+
+    return scores_df, pairwise_prefs_df
 
 
 def _collect_llm_kwargs(args) -> dict:
@@ -359,15 +388,21 @@ def cmd_compute_metrics(args):
 
     metric_names = args.metrics if args.metrics else list_metrics()
     llm_kwargs = _collect_llm_kwargs(args)
-    scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
-                                        metric_names, device=args.device,
-                                        llm_kwargs=llm_kwargs,
-                                        profiles_by_id=profiles_by_id)
+    scores_df, pairwise_prefs_df = _compute_metric_scores(
+        entries, source_texts, reference_texts,
+        metric_names, device=args.device,
+        llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
+    )
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     scores_df.to_csv(output, index=False)
     print(f"Saved metric scores to {output} ({len(scores_df)} rows)")
+
+    if pairwise_prefs_df is not None:
+        prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
+        pairwise_prefs_df.to_csv(prefs_path, index=False)
+        print(f"Saved raw pairwise preferences to {prefs_path}")
 
 
 def _load_neither_thresholds(path: str | None) -> dict[str, float] | None:
@@ -384,6 +419,11 @@ def cmd_correlate(args):
     _, entries = load_annotations(args.annotations)
     scores_df = pd.read_csv(args.scores)
 
+    pairwise_prefs_df = None
+    pairwise_prefs_path = getattr(args, "pairwise_prefs", None)
+    if pairwise_prefs_path:
+        pairwise_prefs_df = pd.read_csv(pairwise_prefs_path)
+
     include_neither = getattr(args, "include_neither", False)
     neither_config = getattr(args, "neither_config", None)
     neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
@@ -398,7 +438,7 @@ def cmd_correlate(args):
     # Pairwise agreement
     agreement = compute_pairwise_agreement(
         preferences, scores_df, neither_thresholds=neither_thresholds,
-        strict=strict,
+        strict=strict, pairwise_prefs=pairwise_prefs_df,
     )
     agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
     print("\n=== Pairwise Agreement ===")
@@ -436,13 +476,19 @@ def cmd_run_all(args):
     # Compute metrics
     metric_names = args.metrics if args.metrics else list_metrics()
     llm_kwargs = _collect_llm_kwargs(args)
-    scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
-                                        metric_names, device=args.device,
-                                        llm_kwargs=llm_kwargs,
-                                        profiles_by_id=profiles_by_id)
+    scores_df, pairwise_prefs_df = _compute_metric_scores(
+        entries, source_texts, reference_texts,
+        metric_names, device=args.device,
+        llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
+    )
     scores_path = output_dir / "metric_scores.csv"
     scores_df.to_csv(scores_path, index=False)
     print(f"Saved metric scores to {scores_path}")
+
+    if pairwise_prefs_df is not None:
+        prefs_path = output_dir / "pairwise_prefs.csv"
+        pairwise_prefs_df.to_csv(prefs_path, index=False)
+        print(f"Saved raw pairwise preferences to {prefs_path}")
 
     # Compute correlations
     include_neither = getattr(args, "include_neither", False)
@@ -454,7 +500,7 @@ def cmd_run_all(args):
 
     agreement = compute_pairwise_agreement(
         preferences, scores_df, neither_thresholds=neither_thresholds,
-        strict=strict,
+        strict=strict, pairwise_prefs=pairwise_prefs_df,
     )
     agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
 
@@ -514,6 +560,8 @@ def main():
     sp = subparsers.add_parser("correlate", help="Compute metric-human correlations")
     sp.add_argument("annotations", help="Path to annotations zip or directory")
     sp.add_argument("--scores", required=True, help="Path to metric scores CSV")
+    sp.add_argument("--pairwise-prefs", default=None,
+                    help="Path to raw pairwise preferences CSV (from pairwise metrics)")
     sp.add_argument("--include-neither", action="store_true",
                     help="Include 'neither' annotations in pairwise agreement")
     sp.add_argument("--neither-config", default=None,
