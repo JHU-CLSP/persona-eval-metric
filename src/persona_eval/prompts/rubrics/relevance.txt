@@ -1,0 +1,6 @@
+Does the summary capture the key information from the source?
+[1] The summary is completely irrelevant and fails to capture any key information from the source document.
+[2] The summary captures very little key information and misses most important points.
+[3] The summary captures some key information but misses several important points.
+[4] The summary captures most key information with only minor omissions.
+[5] The summary captures all key points and essential information from the source.

@@ -1,0 +1,6 @@
+Is the summary well-organized and easy to read?
+[1] The summary is incoherent and very difficult to follow.
+[2] The summary has poor organization with frequent disjointed transitions.
+[3] The summary is somewhat organized but has noticeable structural issues.
+[4] The summary is well-organized with only minor flow issues.
+[5] The summary is excellently structured and flows naturally throughout.

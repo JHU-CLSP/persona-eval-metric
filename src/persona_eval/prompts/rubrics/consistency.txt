@@ -1,0 +1,6 @@
+Is the summary factually consistent with the source document?
+[1] The summary contains major factual errors or hallucinations not found in the source.
+[2] The summary contains several factual inconsistencies with the source.
+[3] The summary is mostly consistent but contains a few minor factual errors.
+[4] The summary is largely consistent with only negligible inaccuracies.
+[5] All information in the summary is fully consistent with the source document.

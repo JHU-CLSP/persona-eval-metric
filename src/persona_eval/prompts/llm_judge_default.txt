@@ -6,7 +6,7 @@ An instruction (might include an Input inside it), a response to evaluate, and a
 4. Please do not generate any other opening, closing, or explanations.
 
 ###Instruction:
-Evaluate the quality of the following summary of a source document. Assess the summary on four dimensions: relevance, coherence, consistency, and fluency.
+Evaluate the quality of the following summary of a source document on the dimension of {dimension}.
 
 Source Document:
 {source}
@@ -17,38 +17,5 @@ Summary:
 ###Response to evaluate:
 {summary}
 
-###Score Rubric for Relevance:
-Does the summary capture the key information from the source?
-[1] The summary is completely irrelevant and fails to capture any key information from the source document.
-[2] The summary captures very little key information and misses most important points.
-[3] The summary captures some key information but misses several important points.
-[4] The summary captures most key information with only minor omissions.
-[5] The summary captures all key points and essential information from the source.
-Feedback for Relevance: {{feedback_relevance}} [RESULT] {{relevance}}
-
-###Score Rubric for Coherence:
-Is the summary well-organized and easy to read?
-[1] The summary is incoherent and very difficult to follow.
-[2] The summary has poor organization with frequent disjointed transitions.
-[3] The summary is somewhat organized but has noticeable structural issues.
-[4] The summary is well-organized with only minor flow issues.
-[5] The summary is excellently structured and flows naturally throughout.
-Feedback for Coherence: {{feedback_coherence}} [RESULT] {{coherence}}
-
-###Score Rubric for Consistency:
-Is the summary factually consistent with the source document?
-[1] The summary contains major factual errors or hallucinations not found in the source.
-[2] The summary contains several factual inconsistencies with the source.
-[3] The summary is mostly consistent but contains a few minor factual errors.
-[4] The summary is largely consistent with only negligible inaccuracies.
-[5] All information in the summary is fully consistent with the source document.
-Feedback for Consistency: {{feedback_consistency}} [RESULT] {{consistency}}
-
-###Score Rubric for Fluency:
-Is the summary grammatically correct and well-written?
-[1] The summary has many grammatical errors and is poorly written.
-[2] The summary has frequent grammatical issues that hinder readability.
-[3] The summary has occasional grammatical errors but is generally readable.
-[4] The summary is well-written with only minor grammatical issues.
-[5] The summary has flawless grammar and excellent writing quality.
-Feedback for Fluency: {{feedback_fluency}} [RESULT] {{fluency}}
+###Score Rubric:
+{rubric}
