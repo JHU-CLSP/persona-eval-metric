@@ -8,7 +8,7 @@ This pipeline:
 
 1. **Loads human annotation data** — pairwise preferences over AI-generated summaries (A vs B, C vs D, final winner)
 2. **Fetches source documents** from OpenAlex — paper abstracts (for reference-free metrics) and titles (for reference-based metrics)
-3. **Computes automatic metrics** — 11 metrics from summ-eval, rouge-score, bert-score, nltk, and spacy
+3. **Computes automatic metrics** — 13 metrics including LLM-as-judge and FACTScore, plus traditional metrics from summ-eval, rouge-score, bert-score, nltk, and spacy
 4. **Measures correlation** — pairwise agreement rate and rank correlation (Kendall tau, Spearman rho) between metrics and human judgments
 
 ## Requirements
@@ -150,12 +150,78 @@ A default config covering all metrics is provided in `neither_thresholds.yaml`.
 | `blanc` | BLANC | reference-free | abstracts |
 | `data_stats` | DataStats | reference-free | abstracts |
 | `syntactic` | Syntactic | reference-free | _(summary only)_ |
+| `llm_judge` | LLM Judge | reference-free | abstracts |
+| `factscore` | FACTScore | reference-free | abstracts |
 
 **Reference-based** metrics compare the summary against concatenated paper titles.
 **Reference-free** metrics compare the summary against concatenated paper abstracts.
 **Syntactic** only analyzes the summary text itself (L2 Syntactic Complexity indices).
+**LLM-based** metrics (`llm_judge`, `factscore`) use an LLM to evaluate summaries — see [LLM-based metrics](#llm-based-metrics) below.
 
 Additional summ-eval metrics (MoverScore, SentenceMovers, ROUGE-WE, S3) require external dependencies — see [METRICS.md](METRICS.md) for setup instructions.
+
+## LLM-based metrics
+
+The `llm_judge` and `factscore` metrics require an LLM backend. Both local [vLLM](https://docs.vllm.ai/) and [TogetherAI](https://www.together.ai/) are supported via their OpenAI-compatible APIs.
+
+### Using vLLM (local)
+
+Start a vLLM server, then point the CLI at it:
+
+```bash
+# In a separate terminal
+vllm serve meta-llama/Meta-Llama-3-8B-Instruct --port 8000
+
+# Run metrics
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge factscore \
+    --llm-provider vllm \
+    --llm-model meta-llama/Meta-Llama-3-8B-Instruct
+```
+
+The default base URL is `http://localhost:8000/v1`. Override with `--llm-base-url` if your server runs elsewhere.
+
+### Using TogetherAI
+
+Set your API key and specify the provider:
+
+```bash
+export TOGETHER_API_KEY=your-key-here
+
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge \
+    --llm-provider together \
+    --llm-model meta-llama/Meta-Llama-3-8B-Instruct
+```
+
+Alternatively, pass the key directly with `--llm-api-key`.
+
+### LLM CLI options
+
+| Flag | Description | Default |
+|---|---|---|
+| `--llm-provider` | Backend: `vllm` or `together` | `vllm` |
+| `--llm-model` | Model name/path (required for LLM metrics) | — |
+| `--llm-api-key` | API key (or use `TOGETHER_API_KEY` env var) | `EMPTY` for vLLM |
+| `--llm-base-url` | Override API base URL | `localhost:8000/v1` (vLLM) |
+| `--llm-prompt-file` | Custom prompt template for `llm_judge` | built-in default |
+
+### Custom judge prompts
+
+The `llm_judge` metric uses a configurable prompt template. The default prompt rates summaries on relevance, coherence, consistency, and fluency (1-5 scale). To customize:
+
+1. Copy the default prompt from `src/persona_eval/prompts/llm_judge_default.txt`
+2. Edit it — use `{summary}` and `{source}` placeholders
+3. The LLM must return a JSON object with numeric scores
+4. Pass your template with `--llm-prompt-file my_prompt.txt`
+
+### FACTScore
+
+The `factscore` metric implements the FACTScore algorithm (Min et al., 2023):
+
+1. Decomposes the summary into atomic facts using the LLM
+2. Verifies each fact against the source document
+3. Returns the fraction of supported facts (`factscore`), along with `factscore_num_facts` and `factscore_num_supported`
 
 ## Adding a custom metric
 
@@ -207,13 +273,20 @@ src/persona_eval/
 ├── annotations.py            # Load annotation data, extract preferences
 ├── openalex.py               # Fetch paper abstracts/titles from OpenAlex
 ├── correlation.py            # Pairwise agreement + rank correlation
+├── llm_client.py             # Shared LLM client (vLLM / TogetherAI)
+├── prompts/
+│   ├── llm_judge_default.txt  # Default LLM judge prompt template
+│   ├── factscore_extract.txt  # Atomic fact extraction prompt
+│   └── factscore_verify.txt   # Fact verification prompt
 └── metrics/
     ├── __init__.py            # Registry imports
     ├── base.py                # BaseMetric ABC + @register_metric
     ├── summeval_metrics.py    # SUPERT, SummaQA, BLANC, BLEU, ChrF++, CIDEr, METEOR, DataStats
     ├── rouge_metrics.py       # ROUGE (via rouge-score)
     ├── bertscore_metric.py    # BERTScore (via bert-score)
-    └── syntactic_metric.py    # Syntactic complexity (via spacy)
+    ├── syntactic_metric.py    # Syntactic complexity (via spacy)
+    ├── llm_judge_metric.py    # LLM-as-judge (via vLLM / TogetherAI)
+    └── factscore_metric.py    # FACTScore (via vLLM / TogetherAI)
 neither_thresholds.yaml        # Default thresholds for "neither" agreement
 METRICS.md                     # Setup for metrics with external dependencies
 ```
