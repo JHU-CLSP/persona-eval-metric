@@ -383,6 +383,12 @@ python scripts/analyze_scores.py metric_scores.csv -o analysis/
 # Analyze specific metrics only
 python scripts/analyze_scores.py metric_scores.csv --metrics rouge1_f bertscore_f supert llm_judge_overall
 
+# With agreement/disagreement examples (requires annotations)
+python scripts/analyze_scores.py metric_scores.csv --annotations annotations.zip -o analysis/
+
+# More examples per metric
+python scripts/analyze_scores.py metric_scores.csv --annotations annotations.zip --n-examples 5
+
 # Stats only, no plots
 python scripts/analyze_scores.py metric_scores.csv --no-plots
 ```
@@ -392,6 +398,7 @@ python scripts/analyze_scores.py metric_scores.csv --no-plots
 - Mean scores per summary label (A/B/C/D)
 - Discriminative power (mean within-query std — how well each metric differentiates between summaries for the same query)
 - Inter-metric Spearman correlation matrix
+- Agreement/disagreement examples (when `--annotations` is provided): concrete cases showing where each metric agrees or disagrees with human preferences, including the summaries and scores involved
 
 **Saved plots** (to output directory):
 - `distributions.png` — histograms with KDE for each metric
@@ -400,7 +407,7 @@ python scripts/analyze_scores.py metric_scores.csv --no-plots
 - `correlation_heatmap.png` — inter-metric Spearman correlation heatmap
 - `per_query_heatmap.png` — normalized scores across queries and metrics
 
-**Saved CSVs**: `summary_stats.csv`, `per_label_means.csv`, `discriminative_power.csv`, `inter_metric_correlation.csv`
+**Saved CSVs**: `summary_stats.csv`, `per_label_means.csv`, `discriminative_power.csv`, `inter_metric_correlation.csv`, `agreement_examples.csv` (when `--annotations` is provided)
 
 ## Project structure
 
