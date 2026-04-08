@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -124,19 +125,17 @@ class LLMClient:
 
 
 def _parse_json_response(text: str) -> dict:
-    """Extract and parse JSON from an LLM response."""
-    # Try direct parse first
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    """Extract and parse JSON from an LLM response.
 
-    # Try extracting from markdown code fences
-    for fence in ("```json", "```"):
-        if fence in text:
-            start = text.index(fence) + len(fence)
-            end = text.index("```", start)
-            return json.loads(text[start:end].strip())
+    Uses regex to find the first JSON object in the response, which is
+    robust to preamble text, markdown code fences, and trailing commentary.
+    """
+    # Match the first { ... } block (greedy inner match to handle nested braces)
+    match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
 
     raise ValueError(f"Could not parse JSON from LLM response: {text[:200]}")
