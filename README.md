@@ -77,7 +77,8 @@ persona-eval run-all annotations.zip \
 ```
 
 Outputs:
-- `results/metric_scores.csv` — per-(query, summary) metric scores
+- `results/metric_scores.csv` — per-(query, summary) metric scores (including tournament points for pairwise metrics)
+- `results/pairwise_prefs.csv` — raw LLM pairwise preferences per comparison (only when pairwise metrics are run)
 - `results/pairwise_agreement.csv` — agreement rate per metric
 - `results/rank_correlation_per_query.csv` — per-query Kendall tau and Spearman rho
 - `results/rank_correlation_aggregate.csv` — mean/median/std across queries
@@ -95,6 +96,12 @@ persona-eval compute-metrics annotations.zip \
 ```bash
 persona-eval correlate annotations.zip \
     --scores metric_scores.csv \
+    --output-dir results/
+
+# With raw pairwise preferences (for direct preference matching)
+persona-eval correlate annotations.zip \
+    --scores metric_scores.csv \
+    --pairwise-prefs pairwise_prefs.csv \
     --output-dir results/
 ```
 
@@ -261,12 +268,6 @@ The `llm_judge_relative` metric uses Prometheus relative grading to compare summ
 1. **Round 1**: A vs B, C vs D (2 LLM calls per dimension × 5 dimensions)
 2. **Final**: winner of AB vs winner of CD (1 LLM call per dimension × 5 dimensions)
 
-Each summary receives tournament points based on progression:
-- **3 points**: won round 1 + won final
-- **1 point**: won round 1, lost final
-- **0 points**: lost in round 1
-- Ties award 0.5 to each side in that round
-
 ```bash
 persona-eval compute-metrics annotations.zip \
     --metrics llm_judge_relative \
@@ -274,7 +275,16 @@ persona-eval compute-metrics annotations.zip \
     --llm-model prometheus-eval/prometheus-7b-v2.0
 ```
 
-The tournament scores plug directly into the existing correlation pipeline, so pairwise agreement and rank correlation are computed the same way as for absolute metrics. This structure ensures that the LLM comparisons match the same pairs the human annotators evaluated.
+This produces two outputs:
+
+- **`pairwise_prefs.csv`** — Raw LLM preferences per comparison (`round1_ab`, `round1_cd`, `final`) with the winning label or `"tie"` for each sub-metric. These are used directly for **pairwise agreement** by matching each human preference against the LLM's corresponding comparison.
+- **`metric_scores.csv`** — Tournament point scores per summary (0–3 scale) used for **rank correlation**, since Kendall tau and Spearman rho need per-summary numeric scores.
+
+For pairwise agreement, the raw preferences are resolved as follows:
+- **Round 1 (A vs B, C vs D)**: direct match against the LLM's round 1 result
+- **Final winner vs final loser**: direct match against the LLM's final result
+- **Final winner vs round loser (same bracket)**: resolved from the LLM's round 1 result
+- **Final winner vs round loser (other bracket)**: resolved transitively (round 1 + final must both agree)
 
 ### Custom judge prompts
 
@@ -358,9 +368,9 @@ The metric is now available via `--metrics my_metric` on the CLI.
 
 ## How correlation is computed
 
-**Pairwise agreement** (primary measure): For each human preference (e.g., "A is better than B"), check whether the metric assigns a higher score to A than B. Reports the fraction of agreements across all comparisons. With `--strict-pairwise`, final-round comparisons automatically count as disagreement if the metric got any round 1 comparison wrong for that annotator/query.
+**Pairwise agreement** (primary measure): For each human preference (e.g., "A is better than B"), check whether the metric agrees. For standard metrics, this compares numeric scores (`score(A) > score(B)`). For pairwise metrics (`llm_judge_relative`), the raw LLM preference is matched directly against the human preference — no score comparison involved. With `--strict-pairwise`, final-round comparisons automatically count as disagreement if the metric got any round 1 comparison wrong for that annotator/query.
 
-**Rank correlation** (complementary measure): For each query, derive a human ranking from the preference data (final winner = rank 1, round winners = rank 2, rest = rank 3.5). Compute Kendall's tau-b and Spearman's rho against the metric's ranking. Results are aggregated (mean, median, std) across all queries.
+**Rank correlation** (complementary measure): For each query, derive a human ranking from the preference data (final winner = rank 1, round winners = rank 2, rest = rank 3.5). Compute Kendall's tau-b and Spearman's rho against the metric's ranking. For pairwise metrics, tournament points are used for this step. Results are aggregated (mean, median, std) across all queries.
 
 ## Analyzing metric scores
 
