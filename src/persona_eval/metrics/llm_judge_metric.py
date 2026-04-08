@@ -1,11 +1,14 @@
 """LLM-as-judge metric with configurable prompts.
 
-Supports local vLLM and TogetherAI backends via the shared LLM client.
+Uses the Prometheus prompt format by default: rubric-based evaluation
+with ``[RESULT]`` tags. Supports local vLLM and TogetherAI backends
+via the shared LLM client.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from persona_eval.metrics.base import BaseMetric, register_metric
@@ -16,6 +19,9 @@ _DEFAULT_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "llm_judge_def
 
 _SCORE_DIMENSIONS = ("relevance", "coherence", "consistency", "fluency")
 
+# Matches "[RESULT] 4" or "[RESULT]4" with optional whitespace
+_RESULT_RE = re.compile(r"\[RESULT\]\s*(\d)")
+
 
 def _load_prompt_template(prompt_file: str | None = None) -> str:
     """Load a prompt template from a file path, falling back to the default."""
@@ -23,16 +29,22 @@ def _load_prompt_template(prompt_file: str | None = None) -> str:
     return path.read_text()
 
 
+def _parse_prometheus_scores(text: str) -> list[int]:
+    """Extract all [RESULT] scores from a Prometheus-style response."""
+    return [int(m.group(1)) for m in _RESULT_RE.finditer(text)]
+
+
 @register_metric("llm_judge")
 class LLMJudgeMetric(BaseMetric):
     """LLM-as-judge: uses an LLM to rate summaries on multiple dimensions.
 
     The prompt template is configurable via ``prompt_file``. It should contain
-    ``{summary}`` and ``{source}`` placeholders. The LLM is expected to return
-    a JSON object with numeric scores.
+    ``{summary}`` and ``{source}`` placeholders.
 
-    By default, the metric evaluates relevance, coherence, consistency, and
-    fluency on a 1-5 scale and computes an overall average.
+    By default, the metric uses the Prometheus prompt format with rubric-based
+    evaluation. The LLM is expected to return feedback with ``[RESULT] <score>``
+    tags for each dimension (relevance, coherence, consistency, fluency) on a
+    1-5 scale.
     """
 
     def __init__(
@@ -75,17 +87,21 @@ class LLMJudgeMetric(BaseMetric):
         prompt = self._prompt_template.format(summary=summary, source=source)
 
         try:
-            result = self._client.generate_json(prompt)
+            response_text = self._client.generate(prompt)
+            result_scores = _parse_prometheus_scores(response_text)
         except Exception:
-            logger.warning("LLM judge failed to return valid JSON, returning NaN scores")
+            logger.warning("LLM judge failed to parse response, returning NaN scores")
             return {f"llm_judge_{d}": float("nan") for d in _SCORE_DIMENSIONS} | {
                 "llm_judge_overall": float("nan")
             }
 
         scores = {}
-        for dim in _SCORE_DIMENSIONS:
-            val = result.get(dim)
-            scores[f"llm_judge_{dim}"] = float(val) if val is not None else float("nan")
+        for i, dim in enumerate(_SCORE_DIMENSIONS):
+            if i < len(result_scores):
+                scores[f"llm_judge_{dim}"] = float(result_scores[i])
+            else:
+                logger.warning("LLM judge missing [RESULT] for %s", dim)
+                scores[f"llm_judge_{dim}"] = float("nan")
 
         valid = [v for v in scores.values() if v == v]  # filter NaN
         scores["llm_judge_overall"] = sum(valid) / len(valid) if valid else float("nan")
