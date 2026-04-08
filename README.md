@@ -362,6 +362,36 @@ The metric is now available via `--metrics my_metric` on the CLI.
 
 **Rank correlation** (complementary measure): For each query, derive a human ranking from the preference data (final winner = rank 1, round winners = rank 2, rest = rank 3.5). Compute Kendall's tau-b and Spearman's rho against the metric's ranking. Results are aggregated (mean, median, std) across all queries.
 
+## Analyzing metric scores
+
+The `scripts/analyze_scores.py` script provides a comprehensive analysis of the metric scores CSV produced by `compute-metrics` or `run-all`.
+
+```bash
+# Full analysis with plots
+python scripts/analyze_scores.py metric_scores.csv -o analysis/
+
+# Analyze specific metrics only
+python scripts/analyze_scores.py metric_scores.csv --metrics rouge1_f bertscore_f supert llm_judge_overall
+
+# Stats only, no plots
+python scripts/analyze_scores.py metric_scores.csv --no-plots
+```
+
+**Terminal output:**
+- Descriptive statistics (mean, std, quartiles, missing %) per metric
+- Mean scores per summary label (A/B/C/D)
+- Discriminative power (mean within-query std — how well each metric differentiates between summaries for the same query)
+- Inter-metric Spearman correlation matrix
+
+**Saved plots** (to output directory):
+- `distributions.png` — histograms with KDE for each metric
+- `boxplots_by_label.png` — score distributions per summary label
+- `discriminative_power.png` — bar chart of within-query variance
+- `correlation_heatmap.png` — inter-metric Spearman correlation heatmap
+- `per_query_heatmap.png` — normalized scores across queries and metrics
+
+**Saved CSVs**: `summary_stats.csv`, `per_label_means.csv`, `discriminative_power.csv`, `inter_metric_correlation.csv`
+
 ## Project structure
 
 ```
@@ -396,6 +426,8 @@ src/persona_eval/
     ├── llm_judge_metric.py    # LLM-as-judge absolute grading
     ├── llm_judge_relative_metric.py  # LLM-as-judge relative grading
     └── factscore_metric.py    # FACTScore (via vLLM / TogetherAI)
+scripts/
+└── analyze_scores.py          # Metric scores analysis and visualisation
 neither_thresholds.yaml        # Default thresholds for "neither" agreement
 METRICS.md                     # Setup for metrics with external dependencies
 ```
