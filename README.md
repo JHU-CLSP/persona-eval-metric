@@ -8,7 +8,7 @@ This pipeline:
 
 1. **Loads human annotation data** — pairwise preferences over AI-generated summaries (A vs B, C vs D, final winner)
 2. **Fetches source documents** from OpenAlex — paper abstracts (for reference-free metrics) and titles (for reference-based metrics)
-3. **Computes automatic metrics** — 13 metrics including LLM-as-judge and FACTScore, plus traditional metrics from summ-eval, rouge-score, bert-score, nltk, and spacy
+3. **Computes automatic metrics** — 14 metrics including LLM-as-judge (absolute and relative grading) and FACTScore, plus traditional metrics from summ-eval, rouge-score, bert-score, nltk, and spacy
 4. **Measures correlation** — pairwise agreement rate and rank correlation (Kendall tau, Spearman rho) between metrics and human judgments
 
 ## Requirements
@@ -150,19 +150,21 @@ A default config covering all metrics is provided in `neither_thresholds.yaml`.
 | `blanc` | BLANC | reference-free | abstracts |
 | `data_stats` | DataStats | reference-free | abstracts |
 | `syntactic` | Syntactic | reference-free | _(summary only)_ |
-| `llm_judge` | LLM Judge | reference-free | abstracts |
+| `llm_judge` | LLM Judge (Absolute) | reference-free | abstracts |
+| `llm_judge_relative` | LLM Judge (Relative) | reference-free, pairwise | abstracts |
 | `factscore` | FACTScore | reference-free | abstracts |
 
 **Reference-based** metrics compare the summary against concatenated paper titles.
 **Reference-free** metrics compare the summary against concatenated paper abstracts.
 **Syntactic** only analyzes the summary text itself (L2 Syntactic Complexity indices).
-**LLM-based** metrics (`llm_judge`, `factscore`) use an LLM to evaluate summaries — see [LLM-based metrics](#llm-based-metrics) below.
+**LLM-based** metrics (`llm_judge`, `llm_judge_relative`, `factscore`) use an LLM to evaluate summaries — see [LLM-based metrics](#llm-based-metrics) below.
+**Pairwise** metrics (`llm_judge_relative`) compare summaries head-to-head rather than scoring individually — see [Relative grading](#relative-grading-pairwise) below.
 
 Additional summ-eval metrics (MoverScore, SentenceMovers, ROUGE-WE, S3) require external dependencies — see [METRICS.md](METRICS.md) for setup instructions.
 
 ## LLM-based metrics
 
-The `llm_judge` and `factscore` metrics require an LLM backend. Both local [vLLM](https://docs.vllm.ai/) and [TogetherAI](https://www.together.ai/) are supported via their OpenAI-compatible APIs.
+The `llm_judge`, `llm_judge_relative`, and `factscore` metrics require an LLM backend. Both local [vLLM](https://docs.vllm.ai/) and [TogetherAI](https://www.together.ai/) are supported via their OpenAI-compatible APIs.
 
 ### Using vLLM (local)
 
@@ -206,14 +208,40 @@ Alternatively, pass the key directly with `--llm-api-key`.
 | `--llm-base-url` | Override API base URL | `localhost:8000/v1` (vLLM) |
 | `--llm-prompt-file` | Custom prompt template for `llm_judge` | built-in default |
 
+### Absolute grading (default)
+
+The `llm_judge` metric uses the Prometheus absolute grading format. It makes one LLM call per dimension (relevance, coherence, consistency, fluency), each with its own rubric. Each call returns a 1-5 score via a `[RESULT]` tag. The overall score is the average across dimensions.
+
+```bash
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge \
+    --llm-provider vllm \
+    --llm-model prometheus-eval/prometheus-7b-v2.0
+```
+
+### Relative grading (pairwise)
+
+The `llm_judge_relative` metric uses Prometheus relative grading to compare summaries head-to-head. For each query, it runs all-pairs comparisons (6 pairs for 4 summaries) across all dimensions and produces a win-rate score (0-1) per summary. Ties count as 0.5 for each side.
+
+```bash
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge_relative \
+    --llm-provider together \
+    --llm-model prometheus-eval/prometheus-7b-v2.0
+```
+
+The win-rate scores plug directly into the existing correlation pipeline, so pairwise agreement and rank correlation are computed the same way as for absolute metrics.
+
 ### Custom judge prompts
 
-The `llm_judge` metric uses a configurable prompt template. The default prompt rates summaries on relevance, coherence, consistency, and fluency (1-5 scale). To customize:
+Both `llm_judge` and `llm_judge_relative` use configurable prompt templates. To customize:
 
-1. Copy the default prompt from `src/persona_eval/prompts/llm_judge_default.txt`
-2. Edit it — use `{summary}` and `{source}` placeholders
-3. The LLM must return a JSON object with numeric scores
+1. Copy the default prompt from `src/persona_eval/prompts/llm_judge_default.txt` (absolute) or `llm_judge_relative.txt` (relative)
+2. Edit it — use `{summary}`, `{source}`, `{dimension}`, and `{rubric}` placeholders (for absolute) or `{summary_a}`, `{summary_b}`, `{source}`, `{dimension}`, and `{rubric}` (for relative)
+3. The LLM must return a `[RESULT]` tag: an integer 1-5 (absolute) or `A`/`B` (relative)
 4. Pass your template with `--llm-prompt-file my_prompt.txt`
+
+Rubrics for each dimension live in `src/persona_eval/prompts/rubrics/` and can be edited independently.
 
 ### FACTScore
 
@@ -275,9 +303,15 @@ src/persona_eval/
 ├── correlation.py            # Pairwise agreement + rank correlation
 ├── llm_client.py             # Shared LLM client (vLLM / TogetherAI)
 ├── prompts/
-│   ├── llm_judge_default.txt  # Default LLM judge prompt template
-│   ├── factscore_extract.txt  # Atomic fact extraction prompt
-│   └── factscore_verify.txt   # Fact verification prompt
+│   ├── llm_judge_default.txt   # Prometheus absolute grading prompt
+│   ├── llm_judge_relative.txt  # Prometheus relative grading prompt
+│   ├── factscore_extract.txt   # Atomic fact extraction prompt
+│   ├── factscore_verify.txt    # Fact verification prompt
+│   └── rubrics/                # Per-dimension scoring rubrics
+│       ├── relevance.txt
+│       ├── coherence.txt
+│       ├── consistency.txt
+│       └── fluency.txt
 └── metrics/
     ├── __init__.py            # Registry imports
     ├── base.py                # BaseMetric ABC + @register_metric
@@ -285,7 +319,8 @@ src/persona_eval/
     ├── rouge_metrics.py       # ROUGE (via rouge-score)
     ├── bertscore_metric.py    # BERTScore (via bert-score)
     ├── syntactic_metric.py    # Syntactic complexity (via spacy)
-    ├── llm_judge_metric.py    # LLM-as-judge (via vLLM / TogetherAI)
+    ├── llm_judge_metric.py    # LLM-as-judge absolute grading
+    ├── llm_judge_relative_metric.py  # LLM-as-judge relative grading
     └── factscore_metric.py    # FACTScore (via vLLM / TogetherAI)
 neither_thresholds.yaml        # Default thresholds for "neither" agreement
 METRICS.md                     # Setup for metrics with external dependencies

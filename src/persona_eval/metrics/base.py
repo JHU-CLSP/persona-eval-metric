@@ -50,6 +50,16 @@ class BaseMetric(ABC):
         """Whether this metric can operate without a reference summary."""
         return True
 
+    @property
+    def is_pairwise(self) -> bool:
+        """Whether this metric compares pairs of summaries (relative grading).
+
+        Pairwise metrics implement ``score_pair()`` instead of ``score()``.
+        The pipeline computes win-rates across all pairs within a query to
+        produce a per-summary score.
+        """
+        return False
+
     @abstractmethod
     def score(self, summary: str, source: str) -> dict[str, float]:
         """Score a single summary.
@@ -62,6 +72,28 @@ class BaseMetric(ABC):
             Dict mapping sub-metric names to float scores.
             E.g., {"rouge1_f": 0.45, "rouge1_p": 0.5, "rouge1_r": 0.41}
         """
+
+    def score_pair(
+        self, summary_a: str, summary_b: str, source: str
+    ) -> dict[str, str]:
+        """Compare two summaries and return a preference per sub-metric.
+
+        Only used when ``is_pairwise`` is True. Override this method for
+        pairwise (relative grading) metrics.
+
+        Args:
+            summary_a: First summary text.
+            summary_b: Second summary text.
+            source: The source document text.
+
+        Returns:
+            Dict mapping sub-metric names to preference strings:
+            ``"A"`` if summary_a is better, ``"B"`` if summary_b is better,
+            or ``"tie"`` if they are equal.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support pairwise scoring"
+        )
 
     def score_batch(
         self, summaries: list[str], sources: list[str]

@@ -43,7 +43,73 @@ def cmd_fetch_sources(args):
         print(f"  ({n_empty_ref} queries had no titles available)")
 
 
-_LLM_METRICS = {"llm_judge", "factscore"}
+_LLM_METRICS = {"llm_judge", "llm_judge_relative", "factscore"}
+
+
+def _compute_pairwise_win_rates(
+    tasks: list[dict],
+    metric,
+    text_key: str,
+) -> list[dict]:
+    """Compute win-rate scores for a pairwise metric.
+
+    For each query, runs all-pairs comparisons between summaries and
+    returns a win-rate (wins / comparisons) per summary per sub-metric.
+    Ties count as 0.5 for each side.
+    """
+    from itertools import combinations
+
+    # Group tasks by query_index
+    by_query: dict[int, list[dict]] = {}
+    for task in tasks:
+        by_query.setdefault(task["query_index"], []).append(task)
+
+    rows = []
+    for qi, query_tasks in tqdm(by_query.items(), desc=metric.name):
+        if len(query_tasks) < 2:
+            continue
+
+        # Initialise win counters per (label, sub-metric)
+        wins: dict[str, dict[str, float]] = {}
+        counts: dict[str, dict[str, int]] = {}
+        sub_metrics = None
+
+        for ta, tb in combinations(query_tasks, 2):
+            result = metric.score_pair(
+                ta["summary"], tb["summary"], ta[text_key],
+            )
+            if sub_metrics is None:
+                sub_metrics = list(result.keys())
+                for t in query_tasks:
+                    wins[t["label"]] = {sm: 0.0 for sm in sub_metrics}
+                    counts[t["label"]] = {sm: 0 for sm in sub_metrics}
+
+            for sm, pref in result.items():
+                counts[ta["label"]][sm] += 1
+                counts[tb["label"]][sm] += 1
+                if pref == "A":
+                    wins[ta["label"]][sm] += 1.0
+                elif pref == "B":
+                    wins[tb["label"]][sm] += 1.0
+                else:  # tie
+                    wins[ta["label"]][sm] += 0.5
+                    wins[tb["label"]][sm] += 0.5
+
+        for task in query_tasks:
+            label = task["label"]
+            if sub_metrics and label in wins:
+                scores = {
+                    sm: wins[label][sm] / counts[label][sm]
+                    if counts[label][sm] > 0 else float("nan")
+                    for sm in sub_metrics
+                }
+                rows.append({
+                    "query_index": qi,
+                    "label": label,
+                    **scores,
+                })
+
+    return rows
 
 
 def _compute_metric_scores(
@@ -58,6 +124,7 @@ def _compute_metric_scores(
 
     Reference-free metrics receive concatenated abstracts as their source.
     Reference-based metrics receive concatenated titles as their source.
+    Pairwise metrics compute win-rates across all pairs within each query.
     """
     # Deduplicate: compute once per unique (query_index, label)
     seen = set()
@@ -88,15 +155,18 @@ def _compute_metric_scores(
         metric = get_metric(metric_name, **kwargs)
         text_key = "source" if metric.is_reference_free else "reference"
 
-        for task in tqdm(tasks, desc=metric_name):
-            scores = metric.score(task["summary"], task[text_key])
-            rows.append(
-                {
-                    "query_index": task["query_index"],
-                    "label": task["label"],
-                    **scores,
-                }
-            )
+        if metric.is_pairwise:
+            rows.extend(_compute_pairwise_win_rates(tasks, metric, text_key))
+        else:
+            for task in tqdm(tasks, desc=metric_name):
+                scores = metric.score(task["summary"], task[text_key])
+                rows.append(
+                    {
+                        "query_index": task["query_index"],
+                        "label": task["label"],
+                        **scores,
+                    }
+                )
 
     # Merge all metric scores into one row per (query_index, label)
     if not rows:

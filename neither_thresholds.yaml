@@ -93,5 +93,12 @@ llm_judge_consistency: 0.5
 llm_judge_fluency: 0.5
 llm_judge_overall: 0.5
 
+# LLM Judge Relative (reference-free) — range [0, 1] win-rate across pairwise comparisons
+llm_judge_rel_relevance: 0.1
+llm_judge_rel_coherence: 0.1
+llm_judge_rel_consistency: 0.1
+llm_judge_rel_fluency: 0.1
+llm_judge_rel_overall: 0.1
+
 # FACTScore (reference-free) — range [0, 1] fraction of supported atomic facts
 factscore: 0.1
