@@ -2,11 +2,13 @@
 """Analyze metric scores from the persona-eval pipeline.
 
 Reads a metric_scores.csv produced by `persona-eval compute-metrics` and
-generates summary statistics and visualisation plots.
+generates summary statistics and visualisation plots. Optionally loads
+annotations to show examples of metric agreement/disagreement with humans.
 
 Usage:
     python scripts/analyze_scores.py metric_scores.csv -o analysis/
     python scripts/analyze_scores.py metric_scores.csv --metrics rouge1_f bertscore_f supert
+    python scripts/analyze_scores.py metric_scores.csv --annotations annotations.zip
 """
 
 from __future__ import annotations
@@ -237,6 +239,139 @@ def plot_per_query_heatmap(df: pd.DataFrame, cols: list[str], output_dir: Path):
 
 
 # ---------------------------------------------------------------------------
+# Agreement / disagreement examples
+# ---------------------------------------------------------------------------
+
+def _get_score(df: pd.DataFrame, qi: int, label: str, metric_col: str) -> float | None:
+    """Look up a single metric score."""
+    row = df[(df["query_index"] == qi) & (df["label"] == label)]
+    if row.empty:
+        return None
+    val = row[metric_col].iloc[0]
+    return None if pd.isna(val) else float(val)
+
+
+def print_agreement_examples(
+    scores_df: pd.DataFrame,
+    preferences: "pd.DataFrame",
+    entries: list,
+    cols: list[str],
+    n_examples: int = 3,
+    output_dir: Path | None = None,
+):
+    """Print concrete examples of agreement and disagreement with humans.
+
+    For each metric, shows n_examples of agreements and n_examples of
+    disagreements, including the summaries and scores involved.
+    """
+    # Build a lookup: (query_index, label) -> summary text
+    summary_lookup: dict[tuple[int, str], str] = {}
+    for entry in entries:
+        for label, text in entry.summaries.items():
+            summary_lookup[(entry.query_index, label)] = text
+
+    # Only look at standard preferences (not "neither")
+    standard = preferences[preferences["preferred"] != "N"]
+    # Only round1 comparisons for cleaner examples
+    round1 = standard[standard["comparison_type"] == "round1"]
+
+    if round1.empty:
+        print("\n  No round1 preferences available for examples.")
+        return
+
+    all_examples = []
+
+    for metric_col in cols:
+        agreements = []
+        disagreements = []
+
+        for _, row in round1.iterrows():
+            qi = row["query_index"]
+            pref = row["preferred"]
+            other = row["other"]
+
+            pref_score = _get_score(scores_df, qi, pref, metric_col)
+            other_score = _get_score(scores_df, qi, other, metric_col)
+
+            if pref_score is None or other_score is None:
+                continue
+
+            example = {
+                "query_index": qi,
+                "human_preferred": pref,
+                "human_other": other,
+                "metric": metric_col,
+                "preferred_score": pref_score,
+                "other_score": other_score,
+                "score_diff": pref_score - other_score,
+                "preferred_summary": summary_lookup.get((qi, pref), "")[:150],
+                "other_summary": summary_lookup.get((qi, other), "")[:150],
+            }
+
+            if pref_score > other_score:
+                agreements.append(example)
+            elif pref_score < other_score:
+                disagreements.append(example)
+
+        # Sort by score difference magnitude for interesting examples
+        agreements.sort(key=lambda x: x["score_diff"], reverse=True)
+        disagreements.sort(key=lambda x: x["score_diff"])
+
+        all_examples.append({
+            "metric": metric_col,
+            "agreements": agreements[:n_examples],
+            "disagreements": disagreements[:n_examples],
+        })
+
+    # Print
+    print("\n" + "=" * 70)
+    print("AGREEMENT / DISAGREEMENT EXAMPLES (round1 comparisons)")
+    print("=" * 70)
+
+    for group in all_examples:
+        metric_col = group["metric"]
+
+        if group["agreements"]:
+            print(f"\n--- {metric_col}: AGREEMENTS (metric agrees with human) ---")
+            for i, ex in enumerate(group["agreements"], 1):
+                print(f"\n  Example {i}: query {ex['query_index']}, "
+                      f"human preferred {ex['human_preferred']} over {ex['human_other']}")
+                print(f"    {metric_col}({ex['human_preferred']}) = {ex['preferred_score']:.4f}  >  "
+                      f"{metric_col}({ex['human_other']}) = {ex['other_score']:.4f}  "
+                      f"(diff: +{ex['score_diff']:.4f})")
+                print(f"    Preferred: {ex['preferred_summary']}...")
+                print(f"    Other:     {ex['other_summary']}...")
+
+        if group["disagreements"]:
+            print(f"\n--- {metric_col}: DISAGREEMENTS (metric disagrees with human) ---")
+            for i, ex in enumerate(group["disagreements"], 1):
+                print(f"\n  Example {i}: query {ex['query_index']}, "
+                      f"human preferred {ex['human_preferred']} over {ex['human_other']}")
+                print(f"    {metric_col}({ex['human_preferred']}) = {ex['preferred_score']:.4f}  <  "
+                      f"{metric_col}({ex['human_other']}) = {ex['other_score']:.4f}  "
+                      f"(diff: {ex['score_diff']:.4f})")
+                print(f"    Preferred: {ex['preferred_summary']}...")
+                print(f"    Other:     {ex['other_summary']}...")
+
+        if not group["agreements"] and not group["disagreements"]:
+            print(f"\n--- {metric_col}: no examples available ---")
+
+    # Save to file
+    if output_dir is not None:
+        rows = []
+        for group in all_examples:
+            for kind, examples in [("agreement", group["agreements"]),
+                                   ("disagreement", group["disagreements"])]:
+                for ex in examples:
+                    rows.append({**ex, "type": kind})
+        if rows:
+            examples_df = pd.DataFrame(rows)
+            path = output_dir / "agreement_examples.csv"
+            examples_df.to_csv(path, index=False)
+            print(f"\n  Saved {path}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -254,6 +389,14 @@ def main():
     parser.add_argument(
         "--metrics", nargs="+", default=None,
         help="Subset of metric columns to analyze (default: all)",
+    )
+    parser.add_argument(
+        "--annotations", default=None,
+        help="Path to annotations zip/dir (enables agreement/disagreement examples)",
+    )
+    parser.add_argument(
+        "--n-examples", type=int, default=3,
+        help="Number of agreement/disagreement examples per metric (default: 3)",
     )
     parser.add_argument(
         "--no-plots", action="store_true",
@@ -292,6 +435,24 @@ def main():
 
     if len(cols) > 1:
         corr = print_correlation_matrix(df, cols)
+
+    # --- Agreement / disagreement examples ---
+    if args.annotations:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from persona_eval.annotations import load_annotations, get_pairwise_preferences
+
+        _, entries = load_annotations(args.annotations)
+        preferences = get_pairwise_preferences(entries)
+
+        output_dir_for_examples = Path(args.output_dir) if not args.no_plots else None
+        if output_dir_for_examples:
+            output_dir_for_examples.mkdir(parents=True, exist_ok=True)
+
+        print_agreement_examples(
+            df, preferences, entries, cols,
+            n_examples=args.n_examples,
+            output_dir=output_dir_for_examples,
+        )
 
     # --- Plots ---
     if not args.no_plots:
