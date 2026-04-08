@@ -68,3 +68,13 @@ syn_coordinate_phrases_per_t_unit: 0.2
 syn_coordinate_phrases_per_clause: 0.1
 syn_complex_nominals_per_t_unit: 0.5
 syn_complex_nominals_per_clause: 0.3
+
+# LLM Judge (reference-free, 1-5 scale)
+llm_judge_relevance: 0.5
+llm_judge_coherence: 0.5
+llm_judge_consistency: 0.5
+llm_judge_fluency: 0.5
+llm_judge_overall: 0.5
+
+# FACTScore (reference-free, 0-1 scale)
+factscore: 0.1

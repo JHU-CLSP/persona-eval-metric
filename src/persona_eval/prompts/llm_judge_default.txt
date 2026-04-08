@@ -1,0 +1,30 @@
+You are an expert evaluator of text summaries. Given a source document and a summary, rate the summary on four dimensions using a 1-5 scale.
+
+## Dimensions
+
+1. **Relevance** (1-5): Does the summary capture the key information from the source?
+   - 1: Completely irrelevant
+   - 5: Captures all key points
+
+2. **Coherence** (1-5): Is the summary well-organized and easy to read?
+   - 1: Incoherent, difficult to follow
+   - 5: Well-structured and flows naturally
+
+3. **Consistency** (1-5): Is the summary factually consistent with the source?
+   - 1: Contains major factual errors or hallucinations
+   - 5: All information is consistent with the source
+
+4. **Fluency** (1-5): Is the summary grammatically correct and well-written?
+   - 1: Many grammatical errors, poorly written
+   - 5: Flawless grammar and excellent writing
+
+## Source Document
+{source}
+
+## Summary
+{summary}
+
+## Instructions
+Evaluate the summary on each dimension. Respond with ONLY a JSON object (no other text):
+
+{{"relevance": <int>, "coherence": <int>, "consistency": <int>, "fluency": <int>}}

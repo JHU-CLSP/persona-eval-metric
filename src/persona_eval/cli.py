@@ -43,12 +43,16 @@ def cmd_fetch_sources(args):
         print(f"  ({n_empty_ref} queries had no titles available)")
 
 
+_LLM_METRICS = {"llm_judge", "factscore"}
+
+
 def _compute_metric_scores(
     entries: list[AnnotationEntry],
     source_texts: dict[int, str],
     reference_texts: dict[int, str],
     metric_names: list[str],
     device: str = "cpu",
+    llm_kwargs: dict | None = None,
 ) -> pd.DataFrame:
     """Compute metric scores for all (query, summary) pairs.
 
@@ -73,10 +77,15 @@ def _compute_metric_scores(
                     }
                 )
 
+    llm_kwargs = llm_kwargs or {}
+
     rows = []
     for metric_name in metric_names:
         print(f"Computing {metric_name}...")
-        metric = get_metric(metric_name, device=device)
+        kwargs = {"device": device}
+        if metric_name in _LLM_METRICS:
+            kwargs.update(llm_kwargs)
+        metric = get_metric(metric_name, **kwargs)
         text_key = "source" if metric.is_reference_free else "reference"
 
         for task in tqdm(tasks, desc=metric_name):
@@ -99,6 +108,42 @@ def _compute_metric_scores(
     return df
 
 
+def _collect_llm_kwargs(args) -> dict:
+    """Collect LLM-related kwargs from CLI args."""
+    kwargs = {}
+    for key in ("provider", "model", "api_key", "base_url", "prompt_file"):
+        attr = f"llm_{key}"
+        val = getattr(args, attr, None)
+        if val is not None:
+            kwargs[key] = val
+    return kwargs
+
+
+def _add_llm_args(parser):
+    """Add LLM-related arguments to a subcommand parser."""
+    group = parser.add_argument_group("LLM options (for llm_judge and factscore metrics)")
+    group.add_argument(
+        "--llm-provider", choices=["vllm", "together"], default="vllm",
+        help="LLM backend provider (default: vllm)",
+    )
+    group.add_argument(
+        "--llm-model",
+        help="Model name or path (required for llm_judge/factscore metrics)",
+    )
+    group.add_argument(
+        "--llm-api-key",
+        help="API key (or set TOGETHER_API_KEY env var for together provider)",
+    )
+    group.add_argument(
+        "--llm-base-url",
+        help="Override base URL (default: http://localhost:8000/v1 for vllm)",
+    )
+    group.add_argument(
+        "--llm-prompt-file",
+        help="Path to custom prompt template for llm_judge metric",
+    )
+
+
 def cmd_compute_metrics(args):
     """Compute automatic metrics for all summaries."""
     _, entries = load_annotations(args.annotations)
@@ -106,8 +151,10 @@ def cmd_compute_metrics(args):
     source_texts, reference_texts = client.get_texts_batch(entries)
 
     metric_names = args.metrics if args.metrics else list_metrics()
+    llm_kwargs = _collect_llm_kwargs(args)
     scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
-                                        metric_names, device=args.device)
+                                        metric_names, device=args.device,
+                                        llm_kwargs=llm_kwargs)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -174,8 +221,10 @@ def cmd_run_all(args):
 
     # Compute metrics
     metric_names = args.metrics if args.metrics else list_metrics()
+    llm_kwargs = _collect_llm_kwargs(args)
     scores_df = _compute_metric_scores(entries, source_texts, reference_texts,
-                                        metric_names, device=args.device)
+                                        metric_names, device=args.device,
+                                        llm_kwargs=llm_kwargs)
     scores_path = output_dir / "metric_scores.csv"
     scores_df.to_csv(scores_path, index=False)
     print(f"Saved metric scores to {scores_path}")
@@ -241,6 +290,7 @@ def main():
     sp.add_argument("--email", help="Email for OpenAlex polite pool")
     sp.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
     sp.add_argument("--output", default="metric_scores.csv", help="Output CSV path")
+    _add_llm_args(sp)
     sp.set_defaults(func=cmd_compute_metrics)
 
     # correlate
@@ -266,6 +316,7 @@ def main():
     sp.add_argument("--neither-config", default=None,
                     help="Path to YAML config with per-metric thresholds for 'neither' agreement")
     sp.add_argument("--output-dir", default="results", help="Output directory")
+    _add_llm_args(sp)
     sp.set_defaults(func=cmd_run_all)
 
     args = parser.parse_args()

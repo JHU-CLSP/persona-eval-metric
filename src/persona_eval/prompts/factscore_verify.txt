@@ -1,0 +1,10 @@
+Given a source document and a claim, determine whether the claim is supported by the source document.
+
+## Source Document
+{source}
+
+## Claim
+{claim}
+
+## Instructions
+Is the claim supported by the information in the source document? Respond with ONLY "supported" or "not supported".
