@@ -55,12 +55,14 @@ class FACTScoreMetric(BaseMetric):
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
+        response_logger=None,
         **kwargs,
     ):
         self._provider = provider
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
+        self._response_logger = response_logger
         self._extract_template = _load_prompt("factscore_extract.txt")
         self._verify_template = _load_prompt("factscore_verify.txt")
         self._client = None
@@ -87,12 +89,35 @@ class FACTScoreMetric(BaseMetric):
     def _extract_facts(self, summary: str) -> list[str]:
         prompt = self._extract_template.format(summary=summary)
         response = self._client.generate(prompt)
-        return _parse_facts(response)
+        facts = _parse_facts(response)
+
+        if self._response_logger:
+            self._response_logger.log(
+                metric="factscore",
+                prompt=prompt,
+                response=response,
+                parsed_result=facts,
+                step="extract_facts",
+            )
+
+        return facts
 
     def _verify_fact(self, source: str, claim: str) -> bool:
         prompt = self._verify_template.format(source=source, claim=claim)
         response = self._client.generate(prompt, max_tokens=16)
-        return "supported" in response.lower() and "not supported" not in response.lower()
+        supported = "supported" in response.lower() and "not supported" not in response.lower()
+
+        if self._response_logger:
+            self._response_logger.log(
+                metric="factscore",
+                prompt=prompt,
+                response=response,
+                parsed_result=supported,
+                step="verify_fact",
+                claim=claim,
+            )
+
+        return supported
 
     def score(self, summary: str, source: str) -> dict[str, float]:
         self._load()

@@ -56,12 +56,14 @@ class LLMJudgeAnnotatorMetric(BaseMetric):
         api_key: str | None = None,
         base_url: str | None = None,
         prompt_file: str | None = None,
+        response_logger=None,
         **kwargs,
     ):
         self._provider = provider
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
+        self._response_logger = response_logger
         self._prompt_template = _load_prompt_template(prompt_file)
         self._client = None
 
@@ -140,6 +142,15 @@ class LLMJudgeAnnotatorMetric(BaseMetric):
         except Exception:
             logger.warning("LLM judge annotator call failed, marking as tie")
             return {"llm_judge_annotator": "tie"}
+
+        if self._response_logger:
+            self._response_logger.log(
+                metric="llm_judge_annotator",
+                prompt=prompt,
+                response=response_text,
+                parsed_result=result,
+                query=pk.get("query", ""),
+            )
 
         if result is None:
             logger.warning("LLM judge annotator: no [RESULT] tag found")

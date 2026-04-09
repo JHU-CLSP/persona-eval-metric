@@ -79,6 +79,7 @@ persona-eval run-all annotations.zip \
 Outputs:
 - `results/metric_scores.csv` — per-(query, summary) metric scores (including tournament points for pairwise metrics)
 - `results/pairwise_prefs.csv` — raw LLM pairwise preferences per comparison (only when pairwise metrics are run)
+- `results/llm_responses/llm_responses_<timestamp>.jsonl` — full LLM prompts, responses, and parsed results (when LLM metrics are run)
 - `results/pairwise_agreement.csv` — agreement rate per metric
 - `results/rank_correlation_per_query.csv` — per-query Kendall tau and Spearman rho
 - `results/rank_correlation_aggregate.csv` — mean/median/std across queries
@@ -459,6 +460,7 @@ src/persona_eval/
 ├── openalex.py               # Fetch paper abstracts/titles from OpenAlex
 ├── correlation.py            # Pairwise agreement + rank correlation
 ├── llm_client.py             # Shared LLM client (vLLM / TogetherAI)
+├── response_logger.py        # JSONL logger for full LLM interactions
 ├── prompts/
 │   ├── llm_judge_default.txt          # Prometheus absolute grading prompt
 │   ├── llm_judge_persona.txt          # Persona-aware absolute grading prompt

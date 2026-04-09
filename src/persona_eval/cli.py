@@ -273,6 +273,7 @@ def _compute_metric_scores(
     device: str = "cpu",
     llm_kwargs: dict | None = None,
     profiles_by_id: dict[str, AnnotatorProfile] | None = None,
+    response_logger=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute metric scores for all (query, summary) pairs.
 
@@ -319,6 +320,8 @@ def _compute_metric_scores(
         kwargs = {"device": device}
         if metric_name in _LLM_METRICS:
             kwargs.update(llm_kwargs)
+            if response_logger is not None:
+                kwargs["response_logger"] = response_logger
         metric = get_metric(metric_name, **kwargs)
         text_key = "source" if metric.is_reference_free else "reference"
         tasks = get_tasks(per_annotator=metric.needs_persona)
@@ -408,6 +411,15 @@ def _add_llm_args(parser):
     )
 
 
+def _create_response_logger(output_path: str | Path, metric_names: list[str]):
+    """Create a ResponseLogger if any LLM metrics are being computed."""
+    if not any(m in _LLM_METRICS for m in metric_names):
+        return None
+    from persona_eval.response_logger import ResponseLogger
+    log_dir = Path(output_path).parent / "llm_responses"
+    return ResponseLogger(log_dir)
+
+
 def cmd_compute_metrics(args):
     """Compute automatic metrics for all summaries."""
     profiles, entries = load_annotations(args.annotations)
@@ -417,10 +429,12 @@ def cmd_compute_metrics(args):
 
     metric_names = args.metrics if args.metrics else list_metrics()
     llm_kwargs = _collect_llm_kwargs(args)
+    response_logger = _create_response_logger(args.output, metric_names)
     scores_df, pairwise_prefs_df = _compute_metric_scores(
         entries, source_texts, reference_texts,
         metric_names, device=args.device,
         llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
+        response_logger=response_logger,
     )
 
     output = Path(args.output)
@@ -432,6 +446,10 @@ def cmd_compute_metrics(args):
         prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
         pairwise_prefs_df.to_csv(prefs_path, index=False)
         print(f"Saved raw pairwise preferences to {prefs_path}")
+
+    if response_logger is not None:
+        print(f"Saved LLM responses to {response_logger.path}")
+        response_logger.close()
 
 
 def _load_neither_thresholds(path: str | None) -> dict[str, float] | None:
@@ -505,14 +523,20 @@ def cmd_run_all(args):
     # Compute metrics
     metric_names = args.metrics if args.metrics else list_metrics()
     llm_kwargs = _collect_llm_kwargs(args)
+    response_logger = _create_response_logger(output_dir / "metric_scores.csv", metric_names)
     scores_df, pairwise_prefs_df = _compute_metric_scores(
         entries, source_texts, reference_texts,
         metric_names, device=args.device,
         llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
+        response_logger=response_logger,
     )
     scores_path = output_dir / "metric_scores.csv"
     scores_df.to_csv(scores_path, index=False)
     print(f"Saved metric scores to {scores_path}")
+
+    if response_logger is not None:
+        print(f"Saved LLM responses to {response_logger.path}")
+        response_logger.close()
 
     if pairwise_prefs_df is not None:
         prefs_path = output_dir / "pairwise_prefs.csv"

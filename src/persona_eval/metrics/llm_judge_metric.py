@@ -73,6 +73,7 @@ class LLMJudgeMetric(BaseMetric):
         base_url: str | None = None,
         prompt_file: str | None = None,
         persona: bool = False,
+        response_logger=None,
         **kwargs,
     ):
         self._provider = provider
@@ -80,6 +81,7 @@ class LLMJudgeMetric(BaseMetric):
         self._api_key = api_key
         self._base_url = base_url
         self._persona = persona
+        self._response_logger = response_logger
         self._prompt_template = _load_prompt_template(prompt_file, persona=persona)
         self._rubrics = {
             dim: _load_rubric(dim, persona=persona) for dim in _ALL_DIMENSIONS
@@ -136,6 +138,16 @@ class LLMJudgeMetric(BaseMetric):
         prompt = self._prompt_template.format(**fmt)
         response_text = self._client.generate(prompt)
         result = _parse_prometheus_score(response_text)
+
+        if self._response_logger:
+            self._response_logger.log(
+                metric="llm_judge",
+                prompt=prompt,
+                response=response_text,
+                parsed_result=result,
+                dimension=dimension,
+            )
+
         if result is None:
             logger.warning("LLM judge: no [RESULT] tag found for %s", dimension)
             return float("nan")
