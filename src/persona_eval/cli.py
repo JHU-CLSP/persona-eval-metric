@@ -212,12 +212,16 @@ def _build_tasks(
     reference_texts: dict[int, str],
     profiles_by_id: dict[str, AnnotatorProfile] | None = None,
     per_annotator: bool = False,
+    include_query: bool = False,
 ) -> list[dict]:
     """Build deduplicated task list from annotation entries.
 
     When ``per_annotator`` is True, tasks are deduplicated by
     (annotator_id, query_index, label) and include persona info.
     Otherwise, deduplicated by (query_index, label).
+
+    When ``include_query`` is True, the annotator's query is included
+    in persona_kwargs so prompts can render it.
     """
     seen = set()
     tasks = []
@@ -235,22 +239,26 @@ def _build_tasks(
                 continue
             seen.add(key)
 
+            pk: dict = {}
+            if include_query:
+                pk["query"] = entry.query or ""
+
             task = {
                 "query_index": entry.query_index,
                 "label": label,
                 "summary": entry.summaries[label],
                 "source": source_texts.get(entry.query_index, ""),
                 "reference": reference_texts.get(entry.query_index, ""),
-                "persona_kwargs": {"query": entry.query or ""},
+                "persona_kwargs": pk,
             }
 
             if per_annotator:
                 task["annotator_id"] = entry.annotator_id
                 profile = (profiles_by_id or {}).get(entry.annotator_id)
-                pk = _make_persona_kwargs(profile)
-                if pk is not None:
-                    pk["query"] = entry.query or ""
-                    task["persona_kwargs"] = pk
+                persona_pk = _make_persona_kwargs(profile)
+                if persona_pk is not None:
+                    persona_pk.update(pk)
+                    task["persona_kwargs"] = persona_pk
 
             tasks.append(task)
 
@@ -280,6 +288,16 @@ def _compute_metric_scores(
             or None if no pairwise metrics were run.
     """
     llm_kwargs = llm_kwargs or {}
+    include_query = llm_kwargs.pop("include_query", False)
+
+    # Force include_query if any requested metric needs it
+    if not include_query:
+        for mn in metric_names:
+            if mn in _LLM_METRICS:
+                m = get_metric(mn, **{**{"device": device}, **llm_kwargs})
+                if m.needs_query:
+                    include_query = True
+                    break
 
     _tasks_cache: dict[bool, list[dict]] = {}
 
@@ -289,6 +307,7 @@ def _compute_metric_scores(
                 entries, source_texts, reference_texts,
                 profiles_by_id=profiles_by_id,
                 per_annotator=per_annotator,
+                include_query=include_query,
             )
         return _tasks_cache[per_annotator]
 
@@ -351,6 +370,8 @@ def _collect_llm_kwargs(args) -> dict:
             kwargs[key] = val
     if getattr(args, "persona", False):
         kwargs["persona"] = True
+    if getattr(args, "include_query", False):
+        kwargs["include_query"] = True
     return kwargs
 
 
@@ -380,6 +401,10 @@ def _add_llm_args(parser):
     group.add_argument(
         "--persona", action="store_true",
         help="Enable persona-aware evaluation using annotator profiles",
+    )
+    group.add_argument(
+        "--include-query", action="store_true",
+        help="Include the annotator's query in LLM judge prompts",
     )
 
 

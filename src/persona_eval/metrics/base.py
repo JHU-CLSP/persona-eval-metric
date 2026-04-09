@@ -56,6 +56,11 @@ class BaseMetric(ABC):
         return False
 
     @property
+    def needs_query(self) -> bool:
+        """Whether this metric requires the annotator's query."""
+        return False
+
+    @property
     def is_pairwise(self) -> bool:
         """Whether this metric compares pairs of summaries (relative grading).
 

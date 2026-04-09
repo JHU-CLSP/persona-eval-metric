@@ -240,6 +240,7 @@ Alternatively, pass the key directly with `--llm-api-key`.
 | `--llm-base-url` | Override API base URL | `localhost:8000/v1` (vLLM) |
 | `--llm-prompt-file` | Custom prompt template for `llm_judge` | built-in default |
 | `--persona` | Enable persona-aware evaluation using annotator profiles | off |
+| `--include-query` | Include the annotator's query in LLM judge prompts | off |
 
 ### Evaluation dimensions
 
@@ -297,6 +298,28 @@ Both `llm_judge` and `llm_judge_relative` use configurable prompt templates. To 
 4. Pass your template with `--llm-prompt-file my_prompt.txt`
 
 Rubrics for each dimension live in `src/persona_eval/prompts/rubrics/` and can be edited independently.
+
+### Including the annotator's query
+
+By default, the LLM judge prompts do not include the annotator's query. Use `--include-query` to add it:
+
+```bash
+# Absolute grading with query context
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge \
+    --llm-provider vllm --llm-model my-model \
+    --include-query
+
+# Relative grading with query + persona
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge_relative \
+    --llm-provider vllm --llm-model my-model \
+    --persona --include-query
+```
+
+When enabled, the prompt includes a `Query: <text>` section so the LLM can consider what the annotator was looking for when evaluating the summary. This works with all prompt variants (absolute, relative, persona, non-persona).
+
+Note: `llm_judge_annotator` always includes the query automatically since query relevance is its core evaluation criterion — `--include-query` is not needed for it.
 
 ### Persona-aware evaluation
 

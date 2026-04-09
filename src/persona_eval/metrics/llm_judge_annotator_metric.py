@@ -81,6 +81,10 @@ class LLMJudgeAnnotatorMetric(BaseMetric):
     def needs_persona(self) -> bool:
         return True
 
+    @property
+    def needs_query(self) -> bool:
+        return True
+
     def _load(self):
         if self._client is None:
             from persona_eval.llm_client import LLMClient
