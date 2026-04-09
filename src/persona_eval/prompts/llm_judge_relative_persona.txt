@@ -12,7 +12,7 @@ Annotator profile:
 - Role: {role}
 - Domain: {domain}
 - Information needs: {info_needs}
-
+{query_section}
 Compare the quality of the following two summaries of a source document on the dimension of {dimension}, from this person's perspective.
 
 Source Document:

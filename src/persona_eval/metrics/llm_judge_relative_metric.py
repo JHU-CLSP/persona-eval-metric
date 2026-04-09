@@ -126,12 +126,17 @@ class LLMJudgeRelativeMetric(BaseMetric):
     ) -> str:
         """Compare two summaries on one dimension. Returns 'A', 'B', or 'tie'."""
         rubric = self._rubrics[dimension]
+        pk = persona_kwargs or {}
+
+        query = pk.get("query", "")
+        query_section = f"\nQuery: {query}\n" if query else "\n"
+
         fmt = dict(
             summary_a=summary_a, summary_b=summary_b,
             source=source, dimension=dimension,
+            query_section=query_section,
         )
 
-        pk = persona_kwargs or {}
         if pk:
             rubric = rubric.format(**pk)
             fmt.update(pk)

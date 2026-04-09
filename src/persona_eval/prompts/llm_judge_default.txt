@@ -7,7 +7,7 @@ An instruction (might include an Input inside it), a response to evaluate, and a
 
 ###Instruction:
 Evaluate the quality of the following summary of a source document on the dimension of {dimension}.
-
+{query_section}
 Source Document:
 {source}
 

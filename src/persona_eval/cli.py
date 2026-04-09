@@ -241,6 +241,7 @@ def _build_tasks(
                 "summary": entry.summaries[label],
                 "source": source_texts.get(entry.query_index, ""),
                 "reference": reference_texts.get(entry.query_index, ""),
+                "persona_kwargs": {"query": entry.query or ""},
             }
 
             if per_annotator:
@@ -249,7 +250,7 @@ def _build_tasks(
                 pk = _make_persona_kwargs(profile)
                 if pk is not None:
                     pk["query"] = entry.query or ""
-                task["persona_kwargs"] = pk
+                    task["persona_kwargs"] = pk
 
             tasks.append(task)
 

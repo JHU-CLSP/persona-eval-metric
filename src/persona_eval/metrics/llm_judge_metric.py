@@ -118,10 +118,15 @@ class LLMJudgeMetric(BaseMetric):
     ) -> float:
         """Score a single dimension via one LLM call."""
         rubric = self._rubrics[dimension]
-        fmt = dict(summary=summary, source=source, dimension=dimension)
-
-        # Fill persona placeholders in rubric and prompt if available
         pk = persona_kwargs or {}
+
+        # Build query section: included when query is available, empty otherwise
+        query = pk.get("query", "")
+        query_section = f"\nQuery: {query}\n" if query else "\n"
+
+        fmt = dict(summary=summary, source=source, dimension=dimension,
+                   query_section=query_section)
+
         if pk:
             rubric = rubric.format(**pk)
             fmt.update(pk)
