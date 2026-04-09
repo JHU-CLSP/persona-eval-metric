@@ -8,7 +8,7 @@ This pipeline:
 
 1. **Loads human annotation data** — pairwise preferences over AI-generated summaries (A vs B, C vs D, final winner)
 2. **Fetches source documents** from OpenAlex — paper abstracts (for reference-free metrics) and titles (for reference-based metrics)
-3. **Computes automatic metrics** — 14 metrics including LLM-as-judge (absolute and relative grading) and FACTScore, plus traditional metrics from summ-eval, rouge-score, bert-score, nltk, and spacy
+3. **Computes automatic metrics** — 15 metrics including LLM-as-judge (absolute, relative, and annotator-focused) and FACTScore, plus traditional metrics from summ-eval, rouge-score, bert-score, nltk, and spacy
 4. **Measures correlation** — pairwise agreement rate and rank correlation (Kendall tau, Spearman rho) between metrics and human judgments
 
 ## Requirements
@@ -183,6 +183,7 @@ persona-eval run-all annotations.zip \
 | `syntactic` | Syntactic | reference-free | _(summary only)_ |
 | `llm_judge` | LLM Judge (Absolute) | reference-free | abstracts |
 | `llm_judge_relative` | LLM Judge (Relative) | reference-free, pairwise | abstracts |
+| `llm_judge_annotator` | LLM Judge (Annotator) | reference-free, pairwise, persona | abstracts |
 | `factscore` | FACTScore | reference-free | abstracts |
 
 **Reference-based** metrics compare the summary against concatenated paper titles.
@@ -323,6 +324,22 @@ Annotator profiles are loaded from `users.json` in the annotations directory, wi
 - `domain`: their area of expertise
 - `info_needs`: what information they are looking for
 
+### Annotator query-focused evaluation
+
+The `llm_judge_annotator` metric is a pairwise metric that evaluates summaries based on whether they address the annotator's specific query, rather than general quality dimensions. It uses a single LLM call per pair (no per-dimension splitting), with the annotator's profile and query embedded in the prompt.
+
+```bash
+persona-eval compute-metrics annotations.zip \
+    --metrics llm_judge_annotator \
+    --llm-provider vllm \
+    --llm-model prometheus-eval/prometheus-7b-v2.0 \
+    --persona
+```
+
+This metric requires `--persona` since it needs the annotator's role, domain, information needs, and query. Unlike `llm_judge_relative` which evaluates five quality dimensions separately, `llm_judge_annotator` makes a single holistic judgment: which summary better addresses this person's query?
+
+The prompt can be customized by editing `src/persona_eval/prompts/llm_judge_annotator.md` or by passing `--llm-prompt-file`. The template uses `{summary_a}`, `{summary_b}`, `{source}`, `{role}`, `{domain}`, `{info_needs}`, and `{query}` placeholders.
+
 ### FACTScore
 
 The `factscore` metric implements the FACTScore algorithm (Min et al., 2023):
@@ -426,6 +443,7 @@ src/persona_eval/
 │   ├── llm_judge_relative_persona.txt # Persona-aware relative grading prompt
 │   ├── factscore_extract.txt          # Atomic fact extraction prompt
 │   ├── factscore_verify.txt           # Fact verification prompt
+│   ├── llm_judge_annotator.md         # Annotator query-focused prompt
 │   └── rubrics/                       # Per-dimension scoring rubrics
 │       ├── relevance.txt
 │       ├── coherence.txt
@@ -442,6 +460,7 @@ src/persona_eval/
     ├── syntactic_metric.py    # Syntactic complexity (via spacy)
     ├── llm_judge_metric.py    # LLM-as-judge absolute grading
     ├── llm_judge_relative_metric.py  # LLM-as-judge relative grading
+    ├── llm_judge_annotator_metric.py # LLM-as-judge annotator query-focused
     └── factscore_metric.py    # FACTScore (via vLLM / TogetherAI)
 scripts/
 └── analyze_scores.py          # Metric scores analysis and visualisation

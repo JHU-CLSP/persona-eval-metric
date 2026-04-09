@@ -104,5 +104,9 @@ llm_judge_rel_fluency: 0.5
 llm_judge_rel_informativeness: 0.5
 llm_judge_rel_overall: 0.5
 
+# LLM Judge Annotator (reference-free, pairwise) — range [0, 3] tournament points
+#   Single query-focused comparison per pair (no per-dimension splitting)
+llm_judge_annotator: 0.5
+
 # FACTScore (reference-free) — range [0, 1] fraction of supported atomic facts
 factscore: 0.1

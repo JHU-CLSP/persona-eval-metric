@@ -8,3 +8,4 @@ from persona_eval.metrics import syntactic_metric  # noqa: F401
 from persona_eval.metrics import llm_judge_metric  # noqa: F401
 from persona_eval.metrics import factscore_metric  # noqa: F401
 from persona_eval.metrics import llm_judge_relative_metric  # noqa: F401
+from persona_eval.metrics import llm_judge_annotator_metric  # noqa: F401

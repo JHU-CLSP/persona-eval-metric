@@ -48,7 +48,7 @@ def cmd_fetch_sources(args):
         print(f"  ({n_empty_ref} queries had no titles available)")
 
 
-_LLM_METRICS = {"llm_judge", "llm_judge_relative", "factscore"}
+_LLM_METRICS = {"llm_judge", "llm_judge_relative", "llm_judge_annotator", "factscore"}
 
 
 def _make_persona_kwargs(profile: AnnotatorProfile | None) -> dict | None:
@@ -246,7 +246,10 @@ def _build_tasks(
             if per_annotator:
                 task["annotator_id"] = entry.annotator_id
                 profile = (profiles_by_id or {}).get(entry.annotator_id)
-                task["persona_kwargs"] = _make_persona_kwargs(profile)
+                pk = _make_persona_kwargs(profile)
+                if pk is not None:
+                    pk["query"] = entry.query or ""
+                task["persona_kwargs"] = pk
 
             tasks.append(task)
 
