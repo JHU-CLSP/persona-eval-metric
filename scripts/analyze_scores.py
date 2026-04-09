@@ -304,8 +304,8 @@ def print_agreement_examples(
                 "preferred_score": pref_score,
                 "other_score": other_score,
                 "score_diff": pref_score - other_score,
-                "preferred_summary": summary_lookup.get((qi, pref), "")[:150],
-                "other_summary": summary_lookup.get((qi, other), "")[:150],
+                "preferred_summary": summary_lookup.get((qi, pref), ""),
+                "other_summary": summary_lookup.get((qi, other), ""),
             }
 
             if pref_score > other_score:

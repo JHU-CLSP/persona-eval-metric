@@ -386,7 +386,7 @@ def compute_rank_correlation(
             kendall_tau, kendall_p, spearman_rho, spearman_p
     """
     score_cols = [
-        c for c in metric_scores.columns if c not in ("query_index", "label")
+        c for c in metric_scores.columns if c not in ("annotator_id","query_index", "label")
     ]
 
     rows = []
