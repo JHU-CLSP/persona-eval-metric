@@ -119,7 +119,7 @@ class FACTScoreMetric(BaseMetric):
 
         return supported
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
 
         try:

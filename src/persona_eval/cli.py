@@ -334,10 +334,12 @@ def _compute_metric_scores(
             rows.extend(score_rows)
         else:
             for task in tqdm(tasks, desc=metric_name):
-                pk = task.get("persona_kwargs")
+                score_kwargs = {}
+                if metric_name in _LLM_METRICS:
+                    score_kwargs["persona_kwargs"] = task.get("persona_kwargs")
                 scores = metric.score(
                     task["summary"], task[text_key],
-                    persona_kwargs=pk,
+                    **score_kwargs,
                 )
                 row = {
                     "query_index": task["query_index"],
