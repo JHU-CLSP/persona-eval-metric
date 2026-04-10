@@ -1,7 +1,10 @@
 """Robustness testing for summarization metrics."""
 
 from persona_eval.robustness.dataset import (  # noqa: F401
+    DATASET_REGISTRY,
     SummarizationSample,
+    list_available_datasets,
+    load_from_huggingface,
     load_from_persona_eval,
 )
 from persona_eval.robustness.perturbations import (  # noqa: F401

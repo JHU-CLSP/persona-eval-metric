@@ -512,16 +512,30 @@ def cmd_robustness(args):
         print_robustness_report,
         run_robustness,
     )
+    from persona_eval.robustness.dataset import load_from_huggingface
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load data and convert to SummarizationSample
-    profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
-    samples = load_from_persona_eval(
-        entries, source_texts, reference_texts, profiles_by_id,
-    )
-    print(f"Loaded {len(samples)} samples")
+    # Load data: either from --dataset or from annotations
+    dataset_name = getattr(args, "dataset", None)
+    if dataset_name:
+        samples = load_from_huggingface(
+            dataset_name,
+            split=getattr(args, "split", None),
+            num_samples=args.num_samples,
+            seed=args.seed,
+        )
+        print(f"Loaded {len(samples)} samples from {dataset_name}")
+    elif args.annotations:
+        profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
+        samples = load_from_persona_eval(
+            entries, source_texts, reference_texts, profiles_by_id,
+        )
+        print(f"Loaded {len(samples)} samples")
+    else:
+        print("Error: provide either --dataset or annotations path")
+        return
 
     # Optionally subsample
     if args.num_samples and args.num_samples < len(samples):
@@ -755,10 +769,21 @@ def main():
 
     # robustness
     sp = subparsers.add_parser("robustness", help="Run robustness tests on metrics")
-    _add_data_args(sp)
+    sp.add_argument("annotations", nargs="?", default=None,
+                    help="Path to annotations zip or directory (not needed with --dataset)")
+    sp.add_argument("--cache-dir", default="cache", help="Cache directory")
+    sp.add_argument("--email", help="Email for OpenAlex polite pool")
     _add_metric_args(sp)
     _add_llm_args(sp)
     sp.add_argument("--output-dir", default="robustness_results", help="Output directory")
+    sp.add_argument(
+        "--dataset",
+        help="Load a standard dataset instead of annotations. "
+             "Available: arxiv, scitldr, pubmed, elife, plos, mup. "
+             "Stubs (not yet loadable): cdsr, eureka, cells, scinews, longsumm.",
+    )
+    sp.add_argument("--split", default=None,
+                    help="Dataset split to use (default: test, or dataset-specific default)")
     sp.add_argument(
         "--tests", nargs="+",
         help="Robustness tests to run (default: all). "
