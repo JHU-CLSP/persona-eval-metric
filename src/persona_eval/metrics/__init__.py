@@ -5,3 +5,7 @@ from persona_eval.metrics import summeval_metrics  # noqa: F401  (SUPERT, SummaQ
 from persona_eval.metrics import rouge_metrics  # noqa: F401
 from persona_eval.metrics import bertscore_metric  # noqa: F401
 from persona_eval.metrics import syntactic_metric  # noqa: F401
+from persona_eval.metrics import llm_judge_metric  # noqa: F401
+from persona_eval.metrics import factscore_metric  # noqa: F401
+from persona_eval.metrics import llm_judge_relative_metric  # noqa: F401
+from persona_eval.metrics import llm_judge_annotator_metric  # noqa: F401

@@ -1,0 +1,28 @@
+###Task Description:
+An instruction (might include an Input inside it), a response to evaluate, and a score rubric representing an evaluation criteria are given.
+1. Write a detailed feedback that assesses the quality of the response strictly based on the given score rubric, not evaluating in general.
+2. After writing a feedback, write a score that is an integer between 1 and 5. You should refer to the score rubric.
+3. The output format should look as follows: "Feedback: (write a feedback for criteria) [RESULT] (an integer number between 1 and 5)"
+4. Please do not generate any other opening, closing, or explanations.
+
+###Instruction:
+You are evaluating a summary from the perspective of a specific person. Consider their background and information needs when assessing quality.
+
+Annotator profile:
+- Role: {role}
+- Domain: {domain}
+- Information needs: {info_needs}
+{query_section}
+Evaluate the quality of the following summary of a source document on the dimension of {dimension}, from this person's perspective.
+
+Source Document:
+{source}
+
+Summary:
+{summary}
+
+###Response to evaluate:
+{summary}
+
+###Score Rubric:
+{rubric}

@@ -17,6 +17,7 @@ dependencies = [
     "rouge-score>=0.1.2",
     "bert-score>=0.3.13",
     "pyyaml>=6.0",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]

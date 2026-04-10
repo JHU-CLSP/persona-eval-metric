@@ -1,0 +1,6 @@
+Is the summary grammatically correct and well-written?
+[1] The summary has many grammatical errors and is poorly written.
+[2] The summary has frequent grammatical issues that hinder readability.
+[3] The summary has occasional grammatical errors but is generally readable.
+[4] The summary is well-written with only minor grammatical issues.
+[5] The summary has flawless grammar and excellent writing quality.

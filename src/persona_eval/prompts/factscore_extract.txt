@@ -1,0 +1,12 @@
+Break down the following summary into a list of independent atomic facts. Each atomic fact should be a single, verifiable statement.
+
+## Summary
+{summary}
+
+## Instructions
+List each atomic fact on its own line, prefixed with "- ". Output ONLY the list of facts, nothing else.
+
+Example format:
+- The study was conducted in 2020.
+- Researchers used a sample size of 500 participants.
+- Results showed a statistically significant improvement.

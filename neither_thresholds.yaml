@@ -9,6 +9,7 @@
 # These are starting defaults — tune them based on your data.
 
 # Reference-based metrics (scored against concatenated titles)
+# ROUGE: range [0, 1] — precision, recall, and F1 of n-gram overlaps
 rouge1_f: 0.05
 rouge1_p: 0.05
 rouge1_r: 0.05
@@ -18,26 +19,40 @@ rouge2_r: 0.03
 rougeL_f: 0.05
 rougeL_p: 0.05
 rougeL_r: 0.05
+# BERTScore: range [0, 1] — contextual embedding similarity (precision, recall, F1)
 bertscore_p: 0.02
 bertscore_r: 0.02
 bertscore_f: 0.02
+# BLEU: range [0, 100] — modified n-gram precision with brevity penalty
 bleu: 2.0
+# ChrF++: range [0, 100] — character n-gram F-score
 chrf: 2.0
+# CIDEr: range [0, ~10] — TF-IDF-weighted cosine similarity of n-grams
 cider: 0.05
+# METEOR: range [0, 1] — unigram alignment with synonym/stem matching
 meteor: 0.05
 
 # Reference-free metrics (scored against concatenated abstracts)
+# SUPERT: range [0, 1] — pseudo-reference-based similarity
 supert: 0.05
+# SummaQA: range [0, 1] — QA-based consistency (probability and F-score)
 summaqa_avg_prob: 0.05
 summaqa_avg_fscore: 0.05
+# BLANC: range [-1, 1] — comprehension-based quality via masked language model
 blanc: 0.02
 
 # DataStats (reference-free)
+# coverage: range [0, 1] — fraction of source tokens present in summary
 coverage: 0.05
+# density: range [0, ~∞] — average length of extractive fragments
 density: 0.1
+# compression: range [0, ~∞] — ratio of source length to summary length
 compression: 0.1
+# summary_length: range [0, ∞) — word count of the summary
 summary_length: 5.0
+# percentage_novel_*-gram: range [0, 1] — fraction of n-grams in summary not in source
 percentage_novel_1-gram: 0.05
+# percentage_repeated_*-gram_in_summ: range [0, 1] — fraction of repeated n-grams in summary
 percentage_repeated_1-gram_in_summ: 0.01
 percentage_novel_2-gram: 0.05
 percentage_repeated_2-gram_in_summ: 0.01
@@ -45,6 +60,7 @@ percentage_novel_3-gram: 0.05
 percentage_repeated_3-gram_in_summ: 0.01
 
 # Syntactic complexity (reference-free, summary-only)
+# Raw counts: range [0, ∞) — absolute counts of syntactic units
 syn_words: 10.0
 syn_sentences: 1.0
 syn_verb_phrases: 2.0
@@ -54,6 +70,7 @@ syn_dependent_clauses: 1.0
 syn_complex_t_units: 1.0
 syn_coordinate_phrases: 1.0
 syn_complex_nominals: 2.0
+# Ratios: range [0, ∞) — normalized measures of syntactic complexity
 syn_words_per_sentence: 3.0
 syn_words_per_t_unit: 3.0
 syn_words_per_clause: 2.0
@@ -68,3 +85,28 @@ syn_coordinate_phrases_per_t_unit: 0.2
 syn_coordinate_phrases_per_clause: 0.1
 syn_complex_nominals_per_t_unit: 0.5
 syn_complex_nominals_per_clause: 0.3
+
+# LLM Judge (reference-free) — range [1, 5] integer scale per dimension
+llm_judge_relevance: 0.5
+llm_judge_coherence: 0.5
+llm_judge_consistency: 0.5
+llm_judge_fluency: 0.5
+llm_judge_informativeness: 0.5
+llm_judge_overall: 0.5
+
+# LLM Judge Relative (reference-free) — range [0, 3] tournament points
+#   0 = lost in round 1, 0.5 = tied in round 1 then lost, 1 = won round 1 then lost final,
+#   2 = lost round 1 tie + won final tie, 3 = won round 1 + won final
+llm_judge_rel_relevance: 0.5
+llm_judge_rel_coherence: 0.5
+llm_judge_rel_consistency: 0.5
+llm_judge_rel_fluency: 0.5
+llm_judge_rel_informativeness: 0.5
+llm_judge_rel_overall: 0.5
+
+# LLM Judge Annotator (reference-free, pairwise) — range [0, 3] tournament points
+#   Single query-focused comparison per pair (no per-dimension splitting)
+llm_judge_annotator: 0.5
+
+# FACTScore (reference-free) — range [0, 1] fraction of supported atomic facts
+factscore: 0.1
