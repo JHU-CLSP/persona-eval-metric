@@ -36,7 +36,7 @@ class RougeMetric(BaseMetric):
                 ["rouge1", "rouge2", "rougeL"], use_stemmer=True
             )
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._scorer.score(source, summary)
         return {

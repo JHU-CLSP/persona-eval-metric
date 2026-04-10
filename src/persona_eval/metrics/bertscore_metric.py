@@ -36,7 +36,7 @@ class BertScoreMetric(BaseMetric):
 
             self._scorer = bert_score
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         P, R, F = self._scorer.score(
             [summary],

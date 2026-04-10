@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import pandas as pd
@@ -26,29 +25,9 @@ from persona_eval.metrics import get_metric, list_metrics
 from persona_eval.openalex import OpenAlexClient
 
 
-def cmd_list_metrics(args):
-    """List all registered metrics."""
-    for name in list_metrics():
-        metric = get_metric(name)
-        ref = "reference-free" if metric.is_reference_free else "reference-based"
-        print(f"  {name:20s}  {metric.name} ({ref})")
-
-
-def cmd_fetch_sources(args):
-    """Fetch and cache OpenAlex source documents."""
-    _, entries = load_annotations(args.annotations)
-    client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
-    source_texts, reference_texts = client.get_texts_batch(entries)
-    print(f"Fetched texts for {len(source_texts)} unique queries")
-    n_empty_src = sum(1 for t in source_texts.values() if not t)
-    n_empty_ref = sum(1 for t in reference_texts.values() if not t)
-    if n_empty_src:
-        print(f"  ({n_empty_src} queries had no abstracts available)")
-    if n_empty_ref:
-        print(f"  ({n_empty_ref} queries had no titles available)")
-
-
-_LLM_METRICS = {"llm_judge", "llm_judge_relative", "llm_judge_annotator", "factscore"}
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 
 def _make_persona_kwargs(profile: AnnotatorProfile | None) -> dict | None:
@@ -60,6 +39,113 @@ def _make_persona_kwargs(profile: AnnotatorProfile | None) -> dict | None:
         "domain": profile.domain or "unspecified",
         "info_needs": profile.info_needs or "unspecified",
     }
+
+
+def _load_data(args):
+    """Load annotations and fetch source/reference texts.
+
+    Returns:
+        Tuple of (profiles_by_id, entries, source_texts, reference_texts).
+    """
+    profiles, entries = load_annotations(args.annotations)
+    profiles_by_id = {p.annotator_id: p for p in profiles}
+    client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
+    source_texts, reference_texts = client.get_texts_batch(entries)
+    return profiles_by_id, entries, source_texts, reference_texts
+
+
+def _load_neither_thresholds(path: str | None) -> dict[str, float] | None:
+    """Load per-metric neither thresholds from a YAML config file."""
+    if path is None:
+        return None
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    return {str(k): float(v) for k, v in data.items()}
+
+
+def _create_response_logger(output_path: str | Path):
+    """Create a ResponseLogger for LLM response tracking."""
+    from persona_eval.response_logger import ResponseLogger
+    log_dir = Path(output_path).parent / "llm_responses"
+    return ResponseLogger(log_dir)
+
+
+def _collect_llm_kwargs(args) -> dict:
+    """Collect LLM-related kwargs from CLI args."""
+    kwargs = {}
+    for key in ("provider", "model", "api_key", "base_url", "prompt_file"):
+        attr = f"llm_{key}"
+        val = getattr(args, attr, None)
+        if val is not None:
+            kwargs[key] = val
+    if getattr(args, "persona", False):
+        kwargs["persona"] = True
+    if getattr(args, "include_query", False):
+        kwargs["include_query"] = True
+    return kwargs
+
+
+def _compute_and_save(
+    entries, source_texts, reference_texts, profiles_by_id,
+    metric_names, args, output_path,
+):
+    """Compute metrics and save results. Returns (scores_df, pairwise_prefs_df, response_logger)."""
+    llm_kwargs = _collect_llm_kwargs(args)
+    response_logger = _create_response_logger(output_path)
+    scores_df, pairwise_prefs_df = _compute_metric_scores(
+        entries, source_texts, reference_texts,
+        metric_names, device=args.device,
+        llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
+        response_logger=response_logger,
+    )
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    scores_df.to_csv(output, index=False)
+    print(f"Saved metric scores to {output} ({len(scores_df)} rows)")
+
+    if pairwise_prefs_df is not None:
+        prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
+        pairwise_prefs_df.to_csv(prefs_path, index=False)
+        print(f"Saved raw pairwise preferences to {prefs_path}")
+
+    if response_logger is not None:
+        print(f"Saved LLM responses to {response_logger.path}")
+        response_logger.close()
+
+    return scores_df, pairwise_prefs_df
+
+
+def _run_correlations(entries, scores_df, pairwise_prefs_df, args, output_dir):
+    """Compute and save correlation results. Returns (agreement, agg)."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    include_neither = getattr(args, "include_neither", False)
+    neither_config = getattr(args, "neither_config", None)
+    neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
+    strict = getattr(args, "strict_pairwise", False)
+
+    preferences = get_pairwise_preferences(entries, include_neither=include_neither)
+
+    agreement = compute_pairwise_agreement(
+        preferences, scores_df, neither_thresholds=neither_thresholds,
+        strict=strict, pairwise_prefs=pairwise_prefs_df,
+    )
+    agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
+
+    per_query = compute_rank_correlation(entries, scores_df)
+    per_query.to_csv(output_dir / "rank_correlation_per_query.csv", index=False)
+
+    agg = aggregate_correlations(per_query)
+    agg.to_csv(output_dir / "rank_correlation_aggregate.csv", index=False)
+
+    return agreement, agg, include_neither, neither_config, strict
+
+
+# ---------------------------------------------------------------------------
+# Pipeline internals
+# ---------------------------------------------------------------------------
 
 
 def _run_pairwise_comparisons(
@@ -277,11 +363,6 @@ def _compute_metric_scores(
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute metric scores for all (query, summary) pairs.
 
-    Reference-free metrics receive concatenated abstracts as their source.
-    Reference-based metrics receive concatenated titles as their source.
-    Pairwise metrics run a tournament and store both raw preferences
-    and tournament point scores.
-
     Returns:
         Tuple of (scores_df, pairwise_prefs_df).
         scores_df: per-(query, label) metric scores (for all metrics).
@@ -294,11 +375,10 @@ def _compute_metric_scores(
     # Force include_query if any requested metric needs it
     if not include_query:
         for mn in metric_names:
-            if mn in _LLM_METRICS:
-                m = get_metric(mn, **{**{"device": device}, **llm_kwargs})
-                if m.needs_query:
-                    include_query = True
-                    break
+            m = get_metric(mn, device=device, **llm_kwargs)
+            if m.needs_query:
+                include_query = True
+                break
 
     _tasks_cache: dict[bool, list[dict]] = {}
 
@@ -317,11 +397,9 @@ def _compute_metric_scores(
 
     for metric_name in metric_names:
         print(f"Computing {metric_name}...")
-        kwargs = {"device": device}
-        if metric_name in _LLM_METRICS:
-            kwargs.update(llm_kwargs)
-            if response_logger is not None:
-                kwargs["response_logger"] = response_logger
+        kwargs = {"device": device, **llm_kwargs}
+        if response_logger is not None:
+            kwargs["response_logger"] = response_logger
         metric = get_metric(metric_name, **kwargs)
         text_key = "source" if metric.is_reference_free else "reference"
         tasks = get_tasks(per_annotator=metric.needs_persona)
@@ -334,12 +412,9 @@ def _compute_metric_scores(
             rows.extend(score_rows)
         else:
             for task in tqdm(tasks, desc=metric_name):
-                score_kwargs = {}
-                if metric_name in _LLM_METRICS:
-                    score_kwargs["persona_kwargs"] = task.get("persona_kwargs")
                 scores = metric.score(
                     task["summary"], task[text_key],
-                    **score_kwargs,
+                    persona_kwargs=task.get("persona_kwargs"),
                 )
                 row = {
                     "query_index": task["query_index"],
@@ -365,19 +440,120 @@ def _compute_metric_scores(
     return scores_df, pairwise_prefs_df
 
 
-def _collect_llm_kwargs(args) -> dict:
-    """Collect LLM-related kwargs from CLI args."""
-    kwargs = {}
-    for key in ("provider", "model", "api_key", "base_url", "prompt_file"):
-        attr = f"llm_{key}"
-        val = getattr(args, attr, None)
-        if val is not None:
-            kwargs[key] = val
-    if getattr(args, "persona", False):
-        kwargs["persona"] = True
-    if getattr(args, "include_query", False):
-        kwargs["include_query"] = True
-    return kwargs
+# ---------------------------------------------------------------------------
+# CLI commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_list_metrics(args):
+    """List all registered metrics."""
+    for name in list_metrics():
+        metric = get_metric(name)
+        ref = "reference-free" if metric.is_reference_free else "reference-based"
+        print(f"  {name:20s}  {metric.name} ({ref})")
+
+
+def cmd_fetch_sources(args):
+    """Fetch and cache OpenAlex source documents."""
+    _, entries = load_annotations(args.annotations)
+    client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
+    source_texts, reference_texts = client.get_texts_batch(entries)
+    print(f"Fetched texts for {len(source_texts)} unique queries")
+    n_empty_src = sum(1 for t in source_texts.values() if not t)
+    n_empty_ref = sum(1 for t in reference_texts.values() if not t)
+    if n_empty_src:
+        print(f"  ({n_empty_src} queries had no abstracts available)")
+    if n_empty_ref:
+        print(f"  ({n_empty_ref} queries had no titles available)")
+
+
+def cmd_compute_metrics(args):
+    """Compute automatic metrics for all summaries."""
+    profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
+    metric_names = args.metrics if args.metrics else list_metrics()
+    _compute_and_save(
+        entries, source_texts, reference_texts, profiles_by_id,
+        metric_names, args, args.output,
+    )
+
+
+def cmd_correlate(args):
+    """Compute correlations between metrics and human preferences."""
+    _, entries = load_annotations(args.annotations)
+    scores_df = pd.read_csv(args.scores)
+
+    pairwise_prefs_df = None
+    pairwise_prefs_path = getattr(args, "pairwise_prefs", None)
+    if pairwise_prefs_path:
+        pairwise_prefs_df = pd.read_csv(pairwise_prefs_path)
+
+    agreement, agg, include_neither, neither_config, strict = _run_correlations(
+        entries, scores_df, pairwise_prefs_df, args, args.output_dir,
+    )
+
+    print("\n=== Pairwise Agreement ===")
+    if include_neither:
+        print(f"(including 'neither' annotations with thresholds from {neither_config})")
+    if strict:
+        print("(strict mode: final disagreement when round1 is wrong)")
+    print(agreement.to_string(index=False))
+
+    print("\n=== Aggregate Rank Correlation ===")
+    print(agg.to_string(index=False))
+
+
+def cmd_run_all(args):
+    """Run the full pipeline: fetch sources, compute metrics, correlate."""
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load and fetch
+    profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
+    print(f"Loaded {len(entries)} annotations from {len(profiles_by_id)} annotators")
+    print(f"Fetched texts for {len(source_texts)} unique queries")
+
+    # Compute metrics
+    metric_names = args.metrics if args.metrics else list_metrics()
+    scores_df, pairwise_prefs_df = _compute_and_save(
+        entries, source_texts, reference_texts, profiles_by_id,
+        metric_names, args, output_dir / "metric_scores.csv",
+    )
+
+    # Correlations
+    agreement, agg, _, _, _ = _run_correlations(
+        entries, scores_df, pairwise_prefs_df, args, output_dir,
+    )
+
+    # Print summary
+    print("\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
+
+    print("\n--- Pairwise Agreement ---")
+    print(agreement.to_string(index=False))
+
+    print("\n--- Aggregate Rank Correlation ---")
+    print(agg.to_string(index=False))
+
+    print(f"\nAll outputs saved to {output_dir}/")
+
+
+# ---------------------------------------------------------------------------
+# CLI argument helpers
+# ---------------------------------------------------------------------------
+
+
+def _add_data_args(parser):
+    """Add common data-loading arguments."""
+    parser.add_argument("annotations", help="Path to annotations zip or directory")
+    parser.add_argument("--cache-dir", default="cache", help="Cache directory")
+    parser.add_argument("--email", help="Email for OpenAlex polite pool")
+
+
+def _add_metric_args(parser):
+    """Add metric selection arguments."""
+    parser.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all)")
+    parser.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
 
 
 def _add_llm_args(parser):
@@ -413,170 +589,19 @@ def _add_llm_args(parser):
     )
 
 
-def _create_response_logger(output_path: str | Path, metric_names: list[str]):
-    """Create a ResponseLogger if any LLM metrics are being computed."""
-    if not any(m in _LLM_METRICS for m in metric_names):
-        return None
-    from persona_eval.response_logger import ResponseLogger
-    log_dir = Path(output_path).parent / "llm_responses"
-    return ResponseLogger(log_dir)
+def _add_correlation_args(parser):
+    """Add correlation-related arguments."""
+    parser.add_argument("--include-neither", action="store_true",
+                        help="Include 'neither' annotations in pairwise agreement")
+    parser.add_argument("--neither-config", default=None,
+                        help="Path to YAML config with per-metric thresholds for 'neither' agreement")
+    parser.add_argument("--strict-pairwise", action="store_true",
+                        help="Strict mode: auto-disagree on final when metric got round1 wrong")
 
 
-def cmd_compute_metrics(args):
-    """Compute automatic metrics for all summaries."""
-    profiles, entries = load_annotations(args.annotations)
-    profiles_by_id = {p.annotator_id: p for p in profiles}
-    client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
-    source_texts, reference_texts = client.get_texts_batch(entries)
-
-    metric_names = args.metrics if args.metrics else list_metrics()
-    llm_kwargs = _collect_llm_kwargs(args)
-    response_logger = _create_response_logger(args.output, metric_names)
-    scores_df, pairwise_prefs_df = _compute_metric_scores(
-        entries, source_texts, reference_texts,
-        metric_names, device=args.device,
-        llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
-        response_logger=response_logger,
-    )
-
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    scores_df.to_csv(output, index=False)
-    print(f"Saved metric scores to {output} ({len(scores_df)} rows)")
-
-    if pairwise_prefs_df is not None:
-        prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
-        pairwise_prefs_df.to_csv(prefs_path, index=False)
-        print(f"Saved raw pairwise preferences to {prefs_path}")
-
-    if response_logger is not None:
-        print(f"Saved LLM responses to {response_logger.path}")
-        response_logger.close()
-
-
-def _load_neither_thresholds(path: str | None) -> dict[str, float] | None:
-    """Load per-metric neither thresholds from a YAML config file."""
-    if path is None:
-        return None
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    return {str(k): float(v) for k, v in data.items()}
-
-
-def cmd_correlate(args):
-    """Compute correlations between metrics and human preferences."""
-    _, entries = load_annotations(args.annotations)
-    scores_df = pd.read_csv(args.scores)
-
-    pairwise_prefs_df = None
-    pairwise_prefs_path = getattr(args, "pairwise_prefs", None)
-    if pairwise_prefs_path:
-        pairwise_prefs_df = pd.read_csv(pairwise_prefs_path)
-
-    include_neither = getattr(args, "include_neither", False)
-    neither_config = getattr(args, "neither_config", None)
-    neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
-
-    preferences = get_pairwise_preferences(entries, include_neither=include_neither)
-
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    strict = getattr(args, "strict_pairwise", False)
-
-    # Pairwise agreement
-    agreement = compute_pairwise_agreement(
-        preferences, scores_df, neither_thresholds=neither_thresholds,
-        strict=strict, pairwise_prefs=pairwise_prefs_df,
-    )
-    agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
-    print("\n=== Pairwise Agreement ===")
-    if include_neither:
-        print(f"(including 'neither' annotations with thresholds from {neither_config})")
-    if strict:
-        print("(strict mode: final disagreement when round1 is wrong)")
-    print(agreement.to_string(index=False))
-
-    # Rank correlation
-    per_query = compute_rank_correlation(entries, scores_df)
-    per_query.to_csv(output_dir / "rank_correlation_per_query.csv", index=False)
-
-    agg = aggregate_correlations(per_query)
-    agg.to_csv(output_dir / "rank_correlation_aggregate.csv", index=False)
-    print("\n=== Aggregate Rank Correlation ===")
-    print(agg.to_string(index=False))
-
-
-def cmd_run_all(args):
-    """Run the full pipeline: fetch sources, compute metrics, correlate."""
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Load annotations
-    profiles, entries = load_annotations(args.annotations)
-    profiles_by_id = {p.annotator_id: p for p in profiles}
-    print(f"Loaded {len(entries)} annotations from {len(profiles)} annotators")
-
-    # Fetch sources
-    client = OpenAlexClient(cache_dir=args.cache_dir, email=args.email)
-    source_texts, reference_texts = client.get_texts_batch(entries)
-    print(f"Fetched texts for {len(source_texts)} unique queries")
-
-    # Compute metrics
-    metric_names = args.metrics if args.metrics else list_metrics()
-    llm_kwargs = _collect_llm_kwargs(args)
-    response_logger = _create_response_logger(output_dir / "metric_scores.csv", metric_names)
-    scores_df, pairwise_prefs_df = _compute_metric_scores(
-        entries, source_texts, reference_texts,
-        metric_names, device=args.device,
-        llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
-        response_logger=response_logger,
-    )
-    scores_path = output_dir / "metric_scores.csv"
-    scores_df.to_csv(scores_path, index=False)
-    print(f"Saved metric scores to {scores_path}")
-
-    if response_logger is not None:
-        print(f"Saved LLM responses to {response_logger.path}")
-        response_logger.close()
-
-    if pairwise_prefs_df is not None:
-        prefs_path = output_dir / "pairwise_prefs.csv"
-        pairwise_prefs_df.to_csv(prefs_path, index=False)
-        print(f"Saved raw pairwise preferences to {prefs_path}")
-
-    # Compute correlations
-    include_neither = getattr(args, "include_neither", False)
-    neither_config = getattr(args, "neither_config", None)
-    neither_thresholds = _load_neither_thresholds(neither_config) if include_neither else None
-
-    strict = getattr(args, "strict_pairwise", False)
-    preferences = get_pairwise_preferences(entries, include_neither=include_neither)
-
-    agreement = compute_pairwise_agreement(
-        preferences, scores_df, neither_thresholds=neither_thresholds,
-        strict=strict, pairwise_prefs=pairwise_prefs_df,
-    )
-    agreement.to_csv(output_dir / "pairwise_agreement.csv", index=False)
-
-    per_query = compute_rank_correlation(entries, scores_df)
-    per_query.to_csv(output_dir / "rank_correlation_per_query.csv", index=False)
-
-    agg = aggregate_correlations(per_query)
-    agg.to_csv(output_dir / "rank_correlation_aggregate.csv", index=False)
-
-    # Print summary
-    print("\n" + "=" * 60)
-    print("RESULTS")
-    print("=" * 60)
-
-    print("\n--- Pairwise Agreement ---")
-    print(agreement.to_string(index=False))
-
-    print("\n--- Aggregate Rank Correlation ---")
-    print(agg.to_string(index=False))
-
-    print(f"\nAll outputs saved to {output_dir}/")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main():
@@ -595,18 +620,13 @@ def main():
 
     # fetch-sources
     sp = subparsers.add_parser("fetch-sources", help="Fetch OpenAlex source documents")
-    sp.add_argument("annotations", help="Path to annotations zip or directory")
-    sp.add_argument("--cache-dir", default="cache", help="Cache directory")
-    sp.add_argument("--email", help="Email for OpenAlex polite pool")
+    _add_data_args(sp)
     sp.set_defaults(func=cmd_fetch_sources)
 
     # compute-metrics
     sp = subparsers.add_parser("compute-metrics", help="Compute automatic metrics")
-    sp.add_argument("annotations", help="Path to annotations zip or directory")
-    sp.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all)")
-    sp.add_argument("--cache-dir", default="cache", help="Cache directory")
-    sp.add_argument("--email", help="Email for OpenAlex polite pool")
-    sp.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
+    _add_data_args(sp)
+    _add_metric_args(sp)
     sp.add_argument("--output", default="metric_scores.csv", help="Output CSV path")
     _add_llm_args(sp)
     sp.set_defaults(func=cmd_compute_metrics)
@@ -617,28 +637,15 @@ def main():
     sp.add_argument("--scores", required=True, help="Path to metric scores CSV")
     sp.add_argument("--pairwise-prefs", default=None,
                     help="Path to raw pairwise preferences CSV (from pairwise metrics)")
-    sp.add_argument("--include-neither", action="store_true",
-                    help="Include 'neither' annotations in pairwise agreement")
-    sp.add_argument("--neither-config", default=None,
-                    help="Path to YAML config with per-metric thresholds for 'neither' agreement")
-    sp.add_argument("--strict-pairwise", action="store_true",
-                    help="Strict mode: auto-disagree on final when metric got round1 wrong")
+    _add_correlation_args(sp)
     sp.add_argument("--output-dir", default="results", help="Output directory")
     sp.set_defaults(func=cmd_correlate)
 
     # run-all
     sp = subparsers.add_parser("run-all", help="Run full pipeline")
-    sp.add_argument("annotations", help="Path to annotations zip or directory")
-    sp.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all)")
-    sp.add_argument("--cache-dir", default="cache", help="Cache directory")
-    sp.add_argument("--email", help="Email for OpenAlex polite pool")
-    sp.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
-    sp.add_argument("--include-neither", action="store_true",
-                    help="Include 'neither' annotations in pairwise agreement")
-    sp.add_argument("--neither-config", default=None,
-                    help="Path to YAML config with per-metric thresholds for 'neither' agreement")
-    sp.add_argument("--strict-pairwise", action="store_true",
-                    help="Strict mode: auto-disagree on final when metric got round1 wrong")
+    _add_data_args(sp)
+    _add_metric_args(sp)
+    _add_correlation_args(sp)
     sp.add_argument("--output-dir", default="results", help="Output directory")
     _add_llm_args(sp)
     sp.set_defaults(func=cmd_run_all)

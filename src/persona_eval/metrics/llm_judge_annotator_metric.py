@@ -13,32 +13,21 @@ Supports local vLLM and TogetherAI backends via the shared LLM client.
 from __future__ import annotations
 
 import logging
-import re
-from pathlib import Path
 
-from persona_eval.metrics.base import BaseMetric, register_metric
+from persona_eval.metrics.base import register_metric
+from persona_eval.metrics.base_llm import (
+    BaseLLMMetric,
+    PAIRWISE_RE,
+    PROMPTS_DIR,
+)
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-_DEFAULT_PROMPT_PATH = _PROMPTS_DIR / "llm_judge_annotator.md"
-
-# Matches "[RESULT] A" or "[RESULT] B" with optional whitespace
-_RESULT_RE = re.compile(r"\[RESULT\]\s*([ABab])")
-
-
-def _load_prompt_template(prompt_file: str | None = None) -> str:
-    path = Path(prompt_file) if prompt_file else _DEFAULT_PROMPT_PATH
-    return path.read_text()
-
-
-def _parse_pairwise_result(text: str) -> str | None:
-    match = _RESULT_RE.search(text)
-    return match.group(1).upper() if match else None
+_DEFAULT_PROMPT_PATH = PROMPTS_DIR / "llm_judge_annotator.md"
 
 
 @register_metric("llm_judge_annotator")
-class LLMJudgeAnnotatorMetric(BaseMetric):
+class LLMJudgeAnnotatorMetric(BaseLLMMetric):
     """LLM-as-judge with annotator query-focused pairwise evaluation.
 
     Compares two summaries in a single LLM call from the annotator's
@@ -51,21 +40,12 @@ class LLMJudgeAnnotatorMetric(BaseMetric):
 
     def __init__(
         self,
-        provider: str = "vllm",
-        model: str | None = None,
-        api_key: str | None = None,
-        base_url: str | None = None,
         prompt_file: str | None = None,
-        response_logger=None,
         **kwargs,
     ):
-        self._provider = provider
-        self._model = model
-        self._api_key = api_key
-        self._base_url = base_url
-        self._response_logger = response_logger
-        self._prompt_template = _load_prompt_template(prompt_file)
-        self._client = None
+        super().__init__(**kwargs)
+        from pathlib import Path
+        self._prompt_template = Path(prompt_file).read_text() if prompt_file else _DEFAULT_PROMPT_PATH.read_text()
 
     @property
     def name(self) -> str:
@@ -86,17 +66,6 @@ class LLMJudgeAnnotatorMetric(BaseMetric):
     @property
     def needs_query(self) -> bool:
         return True
-
-    def _load(self):
-        if self._client is None:
-            from persona_eval.llm_client import LLMClient
-
-            self._client = LLMClient(
-                provider=self._provider,
-                model=self._model,
-                api_key=self._api_key,
-                base_url=self._base_url,
-            )
 
     def score(self, summary: str, source: str, **kwargs) -> dict[str, float]:
         raise NotImplementedError(
@@ -138,19 +107,19 @@ class LLMJudgeAnnotatorMetric(BaseMetric):
 
         try:
             response_text = self._client.generate(prompt)
-            result = _parse_pairwise_result(response_text)
+            match = PAIRWISE_RE.search(response_text)
+            result = match.group(1).upper() if match else None
         except Exception:
             logger.warning("LLM judge annotator call failed, marking as tie")
             return {"llm_judge_annotator": "tie"}
 
-        if self._response_logger:
-            self._response_logger.log(
-                metric="llm_judge_annotator",
-                prompt=prompt,
-                response=response_text,
-                parsed_result=result,
-                query=pk.get("query", ""),
-            )
+        self._log_response(
+            metric="llm_judge_annotator",
+            prompt=prompt,
+            response=response_text,
+            parsed_result=result,
+            query=pk.get("query", ""),
+        )
 
         if result is None:
             logger.warning("LLM judge annotator: no [RESULT] tag found")

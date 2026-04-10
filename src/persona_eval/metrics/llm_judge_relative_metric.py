@@ -11,46 +11,26 @@ When ``--persona`` is enabled, uses persona-aware prompts and rubrics.
 from __future__ import annotations
 
 import logging
-import re
-from pathlib import Path
 
-from persona_eval.metrics.base import BaseMetric, register_metric
+from persona_eval.metrics.base import register_metric
+from persona_eval.metrics.base_llm import (
+    BaseLLMMetric,
+    PAIRWISE_RE,
+    PROMPTS_DIR,
+    load_prompt_template,
+    load_rubric,
+)
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-_DEFAULT_RELATIVE_PROMPT_PATH = _PROMPTS_DIR / "llm_judge_relative.txt"
-_PERSONA_RELATIVE_PROMPT_PATH = _PROMPTS_DIR / "llm_judge_relative_persona.txt"
-_RUBRICS_DIR = _PROMPTS_DIR / "rubrics"
+_DEFAULT_RELATIVE_PROMPT_PATH = PROMPTS_DIR / "llm_judge_relative.txt"
+_PERSONA_RELATIVE_PROMPT_PATH = PROMPTS_DIR / "llm_judge_relative_persona.txt"
 
-_BASE_DIMENSIONS = ("relevance", "coherence", "consistency", "fluency")
-_ALL_DIMENSIONS = _BASE_DIMENSIONS + ("informativeness",)
-
-# Matches "[RESULT] A" or "[RESULT] B" with optional whitespace
-_RESULT_RE = re.compile(r"\[RESULT\]\s*([ABab])")
-
-
-def _load_prompt_template(prompt_file: str | None, persona: bool = False) -> str:
-    if prompt_file:
-        return Path(prompt_file).read_text()
-    path = _PERSONA_RELATIVE_PROMPT_PATH if persona else _DEFAULT_RELATIVE_PROMPT_PATH
-    return path.read_text()
-
-
-def _load_rubric(dimension: str, persona: bool = False) -> str:
-    if persona and dimension == "informativeness":
-        return (_RUBRICS_DIR / "informativeness_persona.txt").read_text()
-    return (_RUBRICS_DIR / f"{dimension}.txt").read_text()
-
-
-def _parse_pairwise_result(text: str) -> str | None:
-    """Extract 'A' or 'B' from a Prometheus relative grading response."""
-    match = _RESULT_RE.search(text)
-    return match.group(1).upper() if match else None
+_ALL_DIMENSIONS = ("relevance", "coherence", "consistency", "fluency", "informativeness")
 
 
 @register_metric("llm_judge_relative")
-class LLMJudgeRelativeMetric(BaseMetric):
+class LLMJudgeRelativeMetric(BaseLLMMetric):
     """LLM-as-judge with Prometheus relative (pairwise) grading.
 
     Compares two summaries per LLM call for each evaluation dimension.
@@ -63,26 +43,19 @@ class LLMJudgeRelativeMetric(BaseMetric):
 
     def __init__(
         self,
-        provider: str = "vllm",
-        model: str | None = None,
-        api_key: str | None = None,
-        base_url: str | None = None,
         prompt_file: str | None = None,
         persona: bool = False,
-        response_logger=None,
         **kwargs,
     ):
-        self._provider = provider
-        self._model = model
-        self._api_key = api_key
-        self._base_url = base_url
+        super().__init__(**kwargs)
         self._persona = persona
-        self._response_logger = response_logger
-        self._prompt_template = _load_prompt_template(prompt_file, persona=persona)
+        self._prompt_template = load_prompt_template(
+            prompt_file, _DEFAULT_RELATIVE_PROMPT_PATH,
+            _PERSONA_RELATIVE_PROMPT_PATH, persona=persona,
+        )
         self._rubrics = {
-            dim: _load_rubric(dim, persona=persona) for dim in _ALL_DIMENSIONS
+            dim: load_rubric(dim, persona=persona) for dim in _ALL_DIMENSIONS
         }
-        self._client = None
 
     @property
     def name(self) -> str:
@@ -99,17 +72,6 @@ class LLMJudgeRelativeMetric(BaseMetric):
     @property
     def needs_persona(self) -> bool:
         return self._persona
-
-    def _load(self):
-        if self._client is None:
-            from persona_eval.llm_client import LLMClient
-
-            self._client = LLMClient(
-                provider=self._provider,
-                model=self._model,
-                api_key=self._api_key,
-                base_url=self._base_url,
-            )
 
     def score(self, summary: str, source: str, **kwargs) -> dict[str, float]:
         """Not used for pairwise metrics — raises an error."""
@@ -147,16 +109,16 @@ class LLMJudgeRelativeMetric(BaseMetric):
 
         prompt = self._prompt_template.format(**fmt)
         response_text = self._client.generate(prompt)
-        result = _parse_pairwise_result(response_text)
+        match = PAIRWISE_RE.search(response_text)
+        result = match.group(1).upper() if match else None
 
-        if self._response_logger:
-            self._response_logger.log(
-                metric="llm_judge_relative",
-                prompt=prompt,
-                response=response_text,
-                parsed_result=result,
-                dimension=dimension,
-            )
+        self._log_response(
+            metric="llm_judge_relative",
+            prompt=prompt,
+            response=response_text,
+            parsed_result=result,
+            dimension=dimension,
+        )
 
         if result is None:
             logger.warning(

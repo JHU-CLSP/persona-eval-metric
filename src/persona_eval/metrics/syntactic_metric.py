@@ -166,7 +166,7 @@ class SyntacticMetric(BaseMetric):
 
             self._nlp = spacy.load("en_core_web_sm")
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         doc = self._nlp(summary)
         counts = _count_structures(doc)
