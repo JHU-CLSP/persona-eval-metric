@@ -14,17 +14,25 @@ The robustness testing system:
 ## Quick start
 
 ```bash
-# Deterministic tests only (no LLM needed)
+# Run on a standard HuggingFace dataset
+persona-eval robustness --dataset scitldr \
+    --tests distractor incremental \
+    --metrics rouge bertscore \
+    --num-samples 50 \
+    --output-dir robustness_results/
+
+# Run on persona-eval annotations
 persona-eval robustness path/to/annotations.zip \
     --tests distractor incremental \
     --metrics rouge bertscore \
     --output-dir robustness_results/
 
 # All tests including LLM-based perturbations
-persona-eval robustness path/to/annotations.zip \
+persona-eval robustness --dataset elife \
     --tests distractor incremental lengthen shorten audience \
     --metrics rouge bertscore llm_judge \
     --llm-provider together --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
+    --num-samples 20 \
     --output-dir robustness_results/
 ```
 
@@ -32,6 +40,9 @@ persona-eval robustness path/to/annotations.zip \
 
 | Flag | Description | Default |
 |---|---|---|
+| `annotations` | Path to annotations zip or directory (positional, optional if `--dataset` is used) | -- |
+| `--dataset` | Load a standard dataset from HuggingFace (see [Supported datasets](#supported-datasets)) | -- |
+| `--split` | Dataset split to use | `test` (dataset-specific) |
 | `--tests` | Which tests to run (see below) | all |
 | `--metrics` | Metrics to evaluate | `rouge` |
 | `--num-samples` | Subsample N samples to limit compute | all |
@@ -40,7 +51,53 @@ persona-eval robustness path/to/annotations.zip \
 | `--output-dir` | Output directory | `robustness_results/` |
 | `--cache-dir` | Cache directory for LLM outputs and OpenAlex | `cache` |
 
-LLM options (`--llm-provider`, `--llm-model`, `--llm-api-key`, `--llm-base-url`) are the same as for annotation analysis and are required when running tests that use LLM perturbations (lengthen, shorten, audience).
+You must provide either `annotations` or `--dataset`. LLM options (`--llm-provider`, `--llm-model`, `--llm-api-key`, `--llm-base-url`) are the same as for annotation analysis and are required when running tests that use LLM perturbations (lengthen, shorten, audience).
+
+## Supported datasets
+
+The `--dataset` flag supports loading scientific summarization datasets directly from HuggingFace. All HF datasets default to the `test` split unless noted otherwise.
+
+### Available (HuggingFace)
+
+| Name | HF ID | Description | Default split |
+|---|---|---|---|
+| `arxiv` | `armanc/scientific_papers` (arxiv) | Arxiv scientific paper summarization | `test` |
+| `pubmed` | `armanc/scientific_papers` (pubmed) | PubMed biomedical paper summarization | `test` |
+| `scitldr` | `allenai/scitldr` (AIC) | Scientific paper TLDRs | `test` |
+| `elife` | `tomasg25/scientific_lay_summarisation` (elife) | eLife journal lay summaries | `test` |
+| `plos` | `tomasg25/scientific_lay_summarisation` (plos) | PLOS journal lay summaries | `test` |
+| `mup` | `allenai/mup` | Multi-perspective scientific paper summarization | `validation` |
+
+### Stubs (not yet loadable)
+
+These datasets have registry entries but are not currently available on HuggingFace. Attempting to load them raises an informative error.
+
+| Name | Description |
+|---|---|
+| `cdsr` | Cochrane Database of Systematic Reviews |
+| `eureka` | EurekAlert scientific press release summarization |
+| `cells` | CELLS scientific summarization |
+| `scinews` | Science news summarization (gated) |
+| `longsumm` | Long scientific document summarization |
+
+### Examples
+
+```bash
+# Run on SciTLDR with a small sample
+persona-eval robustness --dataset scitldr --num-samples 50 --metrics rouge
+
+# Run on PubMed test split
+persona-eval robustness --dataset pubmed --metrics rouge bertscore
+
+# Override the default split
+persona-eval robustness --dataset mup --split validation --num-samples 30
+
+# Use eLife with LLM-based tests
+persona-eval robustness --dataset elife \
+    --tests lengthen shorten audience \
+    --llm-provider together --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
+    --num-samples 20
+```
 
 ## The five tests
 
@@ -150,7 +207,27 @@ class SummarizationSample:
     metadata: dict      # Extra info
 ```
 
-The `load_from_persona_eval()` adapter converts the existing annotation format into this representation. New dataset adapters (e.g., for CNN/DailyMail) can follow the same pattern:
+Two built-in adapters convert external data into this format:
+
+- **`load_from_persona_eval()`** -- converts the persona-eval annotation format (used with the `annotations` positional argument).
+- **`load_from_huggingface(dataset_name)`** -- loads any registered dataset from HuggingFace (used with `--dataset`). The `DATASET_REGISTRY` maps each dataset name to its HF ID, config, column names, and default split.
+
+To add a new HuggingFace dataset, add an entry to `DATASET_REGISTRY` in `src/persona_eval/robustness/dataset.py`:
+
+```python
+DATASET_REGISTRY["my_dataset"] = {
+    "hf_id": "org/dataset-name",
+    "hf_config": None,            # or a specific config name
+    "default_split": "test",
+    "source_col": "article",
+    "summary_col": "summary",
+    "reference_col": "title",     # or None
+    "description": "My dataset description",
+    "available": True,
+}
+```
+
+For datasets not on HuggingFace, you can write a custom adapter:
 
 ```python
 def load_from_my_dataset(path) -> list[SummarizationSample]:
@@ -193,6 +270,44 @@ class MyTest(BasePerturbationTest):
 For LLM-based tests, inherit from `_LLMPerturbationTest` instead to get caching and LLM client access via `self._generate_with_cache()`.
 
 ## Programmatic usage
+
+### Loading from HuggingFace
+
+```python
+from persona_eval.robustness import (
+    load_from_huggingface,
+    list_available_datasets,
+    DistractorSentenceTest,
+    IncrementalAdditionTest,
+    run_robustness,
+    analyze_robustness,
+    print_robustness_report,
+)
+
+# See which datasets are available
+print(list_available_datasets())
+# ['arxiv', 'pubmed', 'scitldr', 'elife', 'plos', 'mup']
+
+# Load samples from a HuggingFace dataset
+samples = load_from_huggingface("scitldr", num_samples=50, seed=42)
+
+tests = [
+    DistractorSentenceTest(distractor_pool=[s.source for s in samples], seed=42),
+    IncrementalAdditionTest(),
+]
+
+scores_df = run_robustness(
+    samples=samples,
+    tests=tests,
+    metric_names=["rouge"],
+    output_dir="my_results/",
+)
+
+analysis_df = analyze_robustness(scores_df, tests)
+print_robustness_report(analysis_df)
+```
+
+### Manual sample construction
 
 ```python
 from persona_eval.robustness import (
