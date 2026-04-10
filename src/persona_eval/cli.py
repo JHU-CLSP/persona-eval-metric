@@ -392,7 +392,7 @@ def _compute_metric_scores(
             )
         return _tasks_cache[per_annotator]
 
-    rows = []
+    all_dfs = []
     all_raw_prefs = []
 
     for metric_name in metric_names:
@@ -404,6 +404,7 @@ def _compute_metric_scores(
         text_key = "source" if metric.is_reference_free else "reference"
         tasks = get_tasks(per_annotator=metric.needs_persona)
 
+        rows = []
         if metric.is_pairwise:
             raw_prefs, score_rows = _run_pairwise_comparisons(
                 tasks, metric, text_key,
@@ -425,15 +426,24 @@ def _compute_metric_scores(
                     row["annotator_id"] = task["annotator_id"]
                 rows.append(row)
 
-    # Merge all metric scores into one row per key
-    if not rows:
+        if rows:
+            df = pd.DataFrame(rows)
+            group_cols = ["query_index", "label"]
+            if "annotator_id" in df.columns:
+                group_cols.insert(0, "annotator_id")
+            df = df.groupby(group_cols, as_index=False).first()
+            all_dfs.append(df)
+
+    # Merge all metric DataFrames into one row per key
+    if not all_dfs:
         scores_df = pd.DataFrame()
     else:
-        scores_df = pd.DataFrame(rows)
-        group_cols = ["query_index", "label"]
-        if "annotator_id" in scores_df.columns:
-            group_cols.insert(0, "annotator_id")
-        scores_df = scores_df.groupby(group_cols, as_index=False).first()
+        scores_df = all_dfs[0]
+        for df in all_dfs[1:]:
+            merge_cols = ["query_index", "label"]
+            if "annotator_id" in scores_df.columns and "annotator_id" in df.columns:
+                merge_cols.insert(0, "annotator_id")
+            scores_df = scores_df.merge(df, on=merge_cols, how="outer")
 
     pairwise_prefs_df = pd.DataFrame(all_raw_prefs) if all_raw_prefs else None
 
