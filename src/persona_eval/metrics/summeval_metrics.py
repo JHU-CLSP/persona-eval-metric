@@ -52,7 +52,7 @@ class SupertMetric(BaseMetric):
 
             self._metric = _Supert()
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {"supert": float(result.get("supert", 0.0))}
@@ -78,7 +78,7 @@ class SummaQAMetric(BaseMetric):
 
             self._metric = _SummaQA(use_gpu=self._device != "cpu")
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {
@@ -105,7 +105,7 @@ class BlancMetric(BaseMetric):
 
             self._metric = _Blanc(device=self._device)
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {"blanc": float(result.get("blanc", 0.0))}
@@ -137,7 +137,7 @@ class ChrfMetric(BaseMetric):
 
             self._metric = _Chrf()
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {"chrf": float(result.get("chrf", 0.0))}
@@ -170,7 +170,7 @@ class MeteorMetric(BaseMetric):
             nltk.download("omw-1.4", quiet=True)
             self._loaded = True
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         from nltk.translate.meteor_score import meteor_score
 
@@ -201,7 +201,7 @@ class BleuMetric(BaseMetric):
 
             self._metric = _Bleu()
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {"bleu": float(result.get("bleu", 0.0))}
@@ -228,7 +228,7 @@ class CiderMetric(BaseMetric):
 
             self._metric = _Cider()
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {"cider": float(result.get("cider", 0.0))}
@@ -256,7 +256,7 @@ class DataStatsMetric(BaseMetric):
 
             self._metric = _DS()
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
         return {k: float(v) for k, v in result.items()}

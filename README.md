@@ -394,9 +394,32 @@ class MyMetric(BaseMetric):
         # False -> receives concatenated titles
         return True
 
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         # Your scoring logic here
         return {"my_metric_score": 0.5}
+```
+
+For LLM-backed metrics, inherit from `BaseLLMMetric` instead — it provides LLM client initialization, lazy loading, and response logging out of the box:
+
+```python
+from persona_eval.metrics.base import register_metric
+from persona_eval.metrics.base_llm import BaseLLMMetric
+
+@register_metric("my_llm_metric")
+class MyLLMMetric(BaseLLMMetric):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Load your prompt templates here
+
+    @property
+    def name(self) -> str:
+        return "My LLM Metric"
+
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
+        self._load()  # lazily creates the LLM client
+        response = self._client.generate("your prompt here")
+        self._log_response("my_llm_metric", "prompt", response, parsed_result=None)
+        return {"my_llm_score": 1.0}
 ```
 
 Then add to `src/persona_eval/metrics/__init__.py`:
@@ -479,6 +502,7 @@ src/persona_eval/
 └── metrics/
     ├── __init__.py            # Registry imports
     ├── base.py                # BaseMetric ABC + @register_metric
+    ├── base_llm.py            # BaseLLMMetric — shared base for LLM-backed metrics
     ├── summeval_metrics.py    # SUPERT, SummaQA, BLANC, BLEU, ChrF++, CIDEr, METEOR, DataStats
     ├── rouge_metrics.py       # ROUGE (via rouge-score)
     ├── bertscore_metric.py    # BERTScore (via bert-score)

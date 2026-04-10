@@ -71,12 +71,18 @@ class BaseMetric(ABC):
         return False
 
     @abstractmethod
-    def score(self, summary: str, source: str) -> dict[str, float]:
+    def score(
+        self,
+        summary: str,
+        source: str,
+        persona_kwargs: dict | None = None,
+    ) -> dict[str, float]:
         """Score a single summary.
 
         Args:
             summary: The generated summary text.
             source: The source document text (concatenated abstracts).
+            persona_kwargs: Optional annotator profile info for persona-aware metrics.
 
         Returns:
             Dict mapping sub-metric names to float scores.
@@ -84,7 +90,11 @@ class BaseMetric(ABC):
         """
 
     def score_pair(
-        self, summary_a: str, summary_b: str, source: str
+        self,
+        summary_a: str,
+        summary_b: str,
+        source: str,
+        persona_kwargs: dict | None = None,
     ) -> dict[str, str]:
         """Compare two summaries and return a preference per sub-metric.
 
@@ -95,6 +105,7 @@ class BaseMetric(ABC):
             summary_a: First summary text.
             summary_b: Second summary text.
             source: The source document text.
+            persona_kwargs: Optional annotator profile info for persona-aware metrics.
 
         Returns:
             Dict mapping sub-metric names to preference strings:
