@@ -1,0 +1,15 @@
+You are given a summary and the source document it was based on.
+
+Rewrite the summary to be longer and more detailed. You MUST follow these rules:
+- Do NOT add any new information that is not already present in or directly inferable from the original summary.
+- Keep all original facts, claims, and findings intact.
+- Expand by elaborating on existing points, adding transitional phrases, and using more descriptive language.
+- The rewritten summary should be approximately 50% longer than the original.
+
+Source document:
+{source}
+
+Original summary:
+{summary}
+
+Rewritten (longer) summary:
