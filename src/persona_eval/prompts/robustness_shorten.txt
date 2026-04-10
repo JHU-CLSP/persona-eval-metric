@@ -1,0 +1,15 @@
+You are given a summary and the source document it was based on.
+
+Rewrite the summary to be shorter and more concise. You MUST follow these rules:
+- Do NOT remove any key information, facts, claims, or findings from the original summary.
+- Preserve all substantive content while using fewer words.
+- Remove redundancy, simplify phrasing, and tighten sentence structure.
+- The rewritten summary should be approximately 50% shorter than the original.
+
+Source document:
+{source}
+
+Original summary:
+{summary}
+
+Rewritten (shorter) summary:

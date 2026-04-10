@@ -502,6 +502,118 @@ def cmd_correlate(args):
     print(agg.to_string(index=False))
 
 
+def cmd_robustness(args):
+    """Run robustness tests on summarization metrics."""
+    from persona_eval.robustness import (
+        ALL_TESTS,
+        PerturbationCache,
+        analyze_robustness,
+        load_from_persona_eval,
+        print_robustness_report,
+        run_robustness,
+    )
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load data and convert to SummarizationSample
+    profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
+    samples = load_from_persona_eval(
+        entries, source_texts, reference_texts, profiles_by_id,
+    )
+    print(f"Loaded {len(samples)} samples")
+
+    # Optionally subsample
+    if args.num_samples and args.num_samples < len(samples):
+        import random
+        rng = random.Random(args.seed)
+        samples = rng.sample(samples, args.num_samples)
+        print(f"Subsampled to {len(samples)} samples (seed={args.seed})")
+
+    # Build perturbation tests
+    test_names = args.tests or list(ALL_TESTS.keys())
+    llm_client = None
+    cache = None
+
+    # Check if any selected test needs an LLM
+    needs_llm = any(
+        ALL_TESTS[t](
+            **({"distractor_pool": [], "seed": args.seed} if t == "distractor" else {})
+        ).requires_llm
+        if t in ("lengthen", "shorten", "audience")
+        else False
+        for t in test_names
+    )
+
+    if needs_llm:
+        from persona_eval.llm_client import LLMClient
+        llm_kwargs = _collect_llm_kwargs(args)
+        llm_kwargs.pop("include_query", None)
+        llm_kwargs.pop("persona", None)
+        llm_kwargs.pop("prompt_file", None)
+        llm_client = LLMClient(
+            provider=llm_kwargs.get("provider", "vllm"),
+            model=llm_kwargs.get("model"),
+            api_key=llm_kwargs.get("api_key"),
+            base_url=llm_kwargs.get("base_url"),
+        )
+        cache = PerturbationCache(args.cache_dir)
+
+    distractor_pool = [s.source for s in samples]
+
+    tests = []
+    for tn in test_names:
+        if tn not in ALL_TESTS:
+            print(f"Warning: unknown test '{tn}', skipping")
+            continue
+        if tn == "distractor":
+            tests.append(ALL_TESTS[tn](
+                distractor_pool=distractor_pool, seed=args.seed,
+            ))
+        elif tn == "incremental":
+            tests.append(ALL_TESTS[tn]())
+        elif tn == "audience":
+            tests.append(ALL_TESTS[tn](
+                llm_client=llm_client, cache=cache,
+                target_audiences=args.target_audiences,
+            ))
+        else:
+            # lengthen, shorten
+            tests.append(ALL_TESTS[tn](llm_client=llm_client, cache=cache))
+
+    # Run metrics
+    metric_names = args.metrics if args.metrics else ["rouge"]
+    metric_kwargs = {}
+    for key in ("provider", "model", "api_key", "base_url"):
+        attr = f"llm_{key}"
+        val = getattr(args, attr, None)
+        if val is not None:
+            metric_kwargs[key] = val
+    metric_kwargs["device"] = args.device
+
+    response_logger = _create_response_logger(output_dir / "scores.csv")
+
+    scores_df = run_robustness(
+        samples=samples,
+        tests=tests,
+        metric_names=metric_names,
+        metric_kwargs=metric_kwargs,
+        output_dir=output_dir,
+        response_logger=response_logger,
+    )
+
+    if response_logger is not None:
+        response_logger.close()
+
+    # Analyze
+    analysis_df = analyze_robustness(scores_df, tests)
+    analysis_path = output_dir / "robustness_analysis.csv"
+    analysis_df.to_csv(analysis_path, index=False)
+    print(f"\nSaved analysis to {analysis_path}")
+
+    print_robustness_report(analysis_df)
+
+
 def cmd_run_all(args):
     """Run the full pipeline: fetch sources, compute metrics, correlate."""
     output_dir = Path(args.output_dir)
@@ -640,6 +752,24 @@ def main():
     _add_correlation_args(sp)
     sp.add_argument("--output-dir", default="results", help="Output directory")
     sp.set_defaults(func=cmd_correlate)
+
+    # robustness
+    sp = subparsers.add_parser("robustness", help="Run robustness tests on metrics")
+    _add_data_args(sp)
+    _add_metric_args(sp)
+    _add_llm_args(sp)
+    sp.add_argument("--output-dir", default="robustness_results", help="Output directory")
+    sp.add_argument(
+        "--tests", nargs="+",
+        help="Robustness tests to run (default: all). "
+             "Choices: distractor, incremental, lengthen, shorten, audience",
+    )
+    sp.add_argument("--num-samples", type=int, default=None,
+                    help="Subsample N samples to limit compute")
+    sp.add_argument("--seed", type=int, default=42, help="Random seed")
+    sp.add_argument("--target-audiences", nargs="+", default=None,
+                    help="Target audiences for the audience rewrite test")
+    sp.set_defaults(func=cmd_robustness)
 
     # run-all
     sp = subparsers.add_parser("run-all", help="Run full pipeline")

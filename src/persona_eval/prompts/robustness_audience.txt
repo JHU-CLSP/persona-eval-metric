@@ -1,0 +1,17 @@
+You are given a summary of a source document. The summary was originally written for: {original_audience}.
+
+Rewrite this summary for a different target audience: {target_audience}.
+
+You should:
+- Adjust the language, terminology, and level of detail to be appropriate for the target audience.
+- You may change which information is emphasized or how concepts are explained.
+- Base your rewrite on the source document, not just the original summary.
+- The rewrite should be roughly the same length as the original summary.
+
+Source document:
+{source}
+
+Original summary (written for {original_audience}):
+{summary}
+
+Rewritten summary (for {target_audience}):
