@@ -75,11 +75,25 @@ See [docs/annotation-analysis.md](docs/annotation-analysis.md) for full CLI refe
 persona-eval robustness path/to/annotations.zip \
     --metrics rouge --output-dir robustness_results/
 
-# Run specific tests with LLM-based perturbations
+# Run specific tests with LLM-based perturbations (vLLM, default)
 persona-eval robustness path/to/annotations.zip \
     --tests distractor incremental lengthen shorten audience \
     --metrics rouge bertscore \
+    --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
+    --output-dir robustness_results/
+
+# Or use TogetherAI as the LLM provider
+persona-eval robustness path/to/annotations.zip \
+    --tests lengthen shorten audience \
+    --metrics rouge bertscore \
     --llm-provider together --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
+    --output-dir robustness_results/
+
+# Use different models for perturbation generation vs evaluation
+persona-eval robustness path/to/annotations.zip \
+    --tests lengthen shorten audience --metrics rouge llm_judge \
+    --llm-provider together --llm-model meta-llama/Meta-Llama-3-70B-Instruct \
+    --perturb-provider vllm --perturb-model meta-llama/Meta-Llama-3-8B-Instruct \
     --output-dir robustness_results/
 
 # Subsample for faster iteration

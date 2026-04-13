@@ -575,11 +575,16 @@ def cmd_robustness(args):
         llm_kwargs.pop("include_query", None)
         llm_kwargs.pop("persona", None)
         llm_kwargs.pop("prompt_file", None)
+        # Perturbation-specific overrides (fall back to --llm-* values)
+        perturb_provider = getattr(args, "perturb_provider", None) or llm_kwargs.get("provider", "vllm")
+        perturb_model = getattr(args, "perturb_model", None) or llm_kwargs.get("model")
+        perturb_api_key = getattr(args, "perturb_api_key", None) or llm_kwargs.get("api_key")
+        perturb_base_url = getattr(args, "perturb_base_url", None) or llm_kwargs.get("base_url")
         llm_client = LLMClient(
-            provider=llm_kwargs.get("provider", "vllm"),
-            model=llm_kwargs.get("model"),
-            api_key=llm_kwargs.get("api_key"),
-            base_url=llm_kwargs.get("base_url"),
+            provider=perturb_provider,
+            model=perturb_model,
+            api_key=perturb_api_key,
+            base_url=perturb_base_url,
         )
         cache = PerturbationCache(args.cache_dir)
 
@@ -725,6 +730,29 @@ def _add_llm_args(parser):
     )
 
 
+def _add_perturb_llm_args(parser):
+    """Add perturbation-specific LLM arguments (override --llm-* for generation)."""
+    group = parser.add_argument_group(
+        "Perturbation LLM options (override --llm-* for perturbation generation)"
+    )
+    group.add_argument(
+        "--perturb-provider", choices=["vllm", "together"],
+        help="LLM provider for perturbation generation (default: same as --llm-provider)",
+    )
+    group.add_argument(
+        "--perturb-model",
+        help="Model for perturbation generation (default: same as --llm-model)",
+    )
+    group.add_argument(
+        "--perturb-api-key",
+        help="API key for perturbation LLM (default: same as --llm-api-key)",
+    )
+    group.add_argument(
+        "--perturb-base-url",
+        help="Base URL for perturbation LLM (default: same as --llm-base-url)",
+    )
+
+
 def _add_correlation_args(parser):
     """Add correlation-related arguments."""
     parser.add_argument("--include-neither", action="store_true",
@@ -785,6 +813,7 @@ def main():
     sp.add_argument("--email", help="Email for OpenAlex polite pool")
     _add_metric_args(sp)
     _add_llm_args(sp)
+    _add_perturb_llm_args(sp)
     sp.add_argument("--output-dir", default="robustness_results", help="Output directory")
     sp.add_argument(
         "--dataset",
