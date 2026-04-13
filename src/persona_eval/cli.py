@@ -21,13 +21,44 @@ from persona_eval.correlation import (
     compute_pairwise_agreement,
     compute_rank_correlation,
 )
-from persona_eval.metrics import get_metric, list_metrics
+from persona_eval.metrics import get_metric, list_metrics, list_llm_metrics, list_non_llm_metrics
 from persona_eval.openalex import OpenAlexClient
 
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_metrics(metrics: list[str] | None, default: list[str] | None = None) -> list[str]:
+    """Resolve the ``--metrics`` argument, expanding shorthand groups.
+
+    Recognised group names: ``"all"``, ``"non-llm"``, ``"all-llm"``.
+    """
+    if not metrics:
+        return default if default is not None else list_metrics()
+
+    GROUP_MAP = {
+        "all": list_metrics,
+        "non-llm": list_non_llm_metrics,
+        "all-llm": list_llm_metrics,
+    }
+
+    resolved: list[str] = []
+    for m in metrics:
+        if m in GROUP_MAP:
+            resolved.extend(GROUP_MAP[m]())
+        else:
+            resolved.append(m)
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for m in resolved:
+        if m not in seen:
+            seen.add(m)
+            deduped.append(m)
+    return deduped
 
 
 def _make_persona_kwargs(profile: AnnotatorProfile | None) -> dict | None:
@@ -480,7 +511,7 @@ def cmd_fetch_sources(args):
 def cmd_compute_metrics(args):
     """Compute automatic metrics for all summaries."""
     profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
-    metric_names = args.metrics if args.metrics else list_metrics()
+    metric_names = _resolve_metrics(args.metrics)
     _compute_and_save(
         entries, source_texts, reference_texts, profiles_by_id,
         metric_names, args, args.output,
@@ -611,7 +642,7 @@ def cmd_robustness(args):
             tests.append(ALL_TESTS[tn](llm_client=llm_client, cache=cache))
 
     # Run metrics
-    metric_names = args.metrics if args.metrics else ["rouge"]
+    metric_names = _resolve_metrics(args.metrics, default=["rouge"])
     metric_kwargs = {}
     for key in ("provider", "model", "api_key", "base_url"):
         attr = f"llm_{key}"
@@ -654,7 +685,7 @@ def cmd_run_all(args):
     print(f"Fetched texts for {len(source_texts)} unique queries")
 
     # Compute metrics
-    metric_names = args.metrics if args.metrics else list_metrics()
+    metric_names = _resolve_metrics(args.metrics)
     scores_df, pairwise_prefs_df = _compute_and_save(
         entries, source_texts, reference_texts, profiles_by_id,
         metric_names, args, output_dir / "metric_scores.csv",
@@ -693,7 +724,7 @@ def _add_data_args(parser):
 
 def _add_metric_args(parser):
     """Add metric selection arguments."""
-    parser.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all)")
+    parser.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all). Use 'all' for all metrics, 'non-llm' for non-LLM metrics, 'all-llm' for LLM-based metrics.")
     parser.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
 
 

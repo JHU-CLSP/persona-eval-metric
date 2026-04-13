@@ -30,6 +30,26 @@ def list_metrics() -> list[str]:
     return sorted(_METRIC_REGISTRY)
 
 
+def list_llm_metrics() -> list[str]:
+    """Return sorted list of metrics that require an LLM backend."""
+    from persona_eval.metrics.base_llm import BaseLLMMetric
+
+    return sorted(
+        name for name, cls in _METRIC_REGISTRY.items()
+        if issubclass(cls, BaseLLMMetric)
+    )
+
+
+def list_non_llm_metrics() -> list[str]:
+    """Return sorted list of metrics that do not require an LLM backend."""
+    from persona_eval.metrics.base_llm import BaseLLMMetric
+
+    return sorted(
+        name for name, cls in _METRIC_REGISTRY.items()
+        if not issubclass(cls, BaseLLMMetric)
+    )
+
+
 class BaseMetric(ABC):
     """Abstract base class for summarization evaluation metrics.
 
