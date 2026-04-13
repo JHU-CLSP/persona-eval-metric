@@ -27,12 +27,28 @@ persona-eval robustness path/to/annotations.zip \
     --metrics rouge bertscore \
     --output-dir robustness_results/
 
-# All tests including LLM-based perturbations
+# LLM-based perturbations with a local vLLM server (default provider)
+persona-eval robustness --dataset elife \
+    --tests distractor incremental lengthen shorten audience \
+    --metrics rouge bertscore llm_judge \
+    --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
+    --num-samples 20 \
+    --output-dir robustness_results/
+
+# LLM-based perturbations with TogetherAI
 persona-eval robustness --dataset elife \
     --tests distractor incremental lengthen shorten audience \
     --metrics rouge bertscore llm_judge \
     --llm-provider together --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
     --num-samples 20 \
+    --output-dir robustness_results/
+
+# Use different models for perturbation generation vs evaluation
+persona-eval robustness --dataset elife \
+    --tests lengthen shorten audience \
+    --metrics rouge llm_judge \
+    --llm-provider together --llm-model meta-llama/Meta-Llama-3-70B-Instruct \
+    --perturb-provider vllm --perturb-model meta-llama/Meta-Llama-3-8B-Instruct \
     --output-dir robustness_results/
 ```
 
@@ -50,8 +66,21 @@ persona-eval robustness --dataset elife \
 | `--target-audiences` | Target audiences for the audience test | 3 defaults |
 | `--output-dir` | Output directory | `robustness_results/` |
 | `--cache-dir` | Cache directory for LLM outputs and OpenAlex | `cache` |
+| `--llm-provider` | LLM backend for perturbation generation (`vllm` or `together`) | `vllm` |
+| `--llm-model` | Model name or path | -- |
+| `--llm-base-url` | Override API base URL | `http://localhost:8000/v1` (vllm) |
+| `--llm-api-key` | API key (or set `TOGETHER_API_KEY` env var) | -- |
+| `--perturb-provider` | LLM provider for perturbation generation (overrides `--llm-provider`) | same as `--llm-provider` |
+| `--perturb-model` | Model for perturbation generation (overrides `--llm-model`) | same as `--llm-model` |
+| `--perturb-base-url` | Base URL for perturbation LLM (overrides `--llm-base-url`) | same as `--llm-base-url` |
+| `--perturb-api-key` | API key for perturbation LLM (overrides `--llm-api-key`) | same as `--llm-api-key` |
 
-You must provide either `annotations` or `--dataset`. LLM options (`--llm-provider`, `--llm-model`, `--llm-api-key`, `--llm-base-url`) are the same as for annotation analysis and are required when running tests that use LLM perturbations (lengthen, shorten, audience).
+You must provide either `annotations` or `--dataset`. LLM options are required when running tests that use LLM perturbations (lengthen, shorten, audience). The `--perturb-*` flags let you use a different model/provider for perturbation generation while `--llm-*` controls the evaluation metrics.
+
+> **vLLM setup:** Start the server before running LLM-based tests:
+> ```bash
+> vllm serve meta-llama/Meta-Llama-3-8B-Instruct --port 8000
+> ```
 
 ## Supported datasets
 
