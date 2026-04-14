@@ -16,6 +16,7 @@ from persona_eval.metrics.base import register_metric
 from persona_eval.metrics.base_llm import (
     BaseLLMMetric,
     PAIRWISE_RE,
+    parse_pairwise_result,
     PROMPTS_DIR,
     load_prompt_template,
     load_rubric,
@@ -110,7 +111,7 @@ class LLMJudgeRelativeMetric(BaseLLMMetric):
         prompt = self._prompt_template.format(**fmt)
         response_text = self._client.generate(prompt)
         match = PAIRWISE_RE.search(response_text)
-        result = match.group(1).upper() if match else None
+        result = parse_pairwise_result(match)
 
         self._log_response(
             metric="llm_judge_relative",

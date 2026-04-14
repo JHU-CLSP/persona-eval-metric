@@ -1,8 +1,8 @@
 ###Task Description:
 You are evaluating summaries from the perspective of a specific annotator. Consider their background and information needs when assessing quality.
 1. Write a detailed feedback that compares the two responses strictly whether the summary the summary best addresses your query, not the fidelity or the style.
-2. After writing a feedback, choose which response best addresses your query. If Response A is better, write "A". If Response B is better, write "B".
-3. The output format should look as follows: "Feedback: (write a feedback for criteria) [RESULT] (A or B)"
+2. After writing a feedback, choose which response best addresses your query. If Response A is better, write "A". If Response B is better, write "B". If neither response is clearly better, write "Neither".
+3. The output format should look as follows: "Feedback: (write a feedback for criteria) [RESULT] (A, B, or Neither)"
 4. Please do not generate any other opening, closing, or explanations.
 
 ###Introduction

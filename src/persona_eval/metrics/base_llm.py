@@ -12,7 +12,20 @@ RUBRICS_DIR = PROMPTS_DIR / "rubrics"
 
 # Shared regex patterns
 SCORE_RE = re.compile(r"\[RESULT\]\s*(\d)")  # Matches "[RESULT] 4"
-PAIRWISE_RE = re.compile(r"\[RESULT\]\s*([ABab])")  # Matches "[RESULT] A"
+PAIRWISE_RE = re.compile(r"\[RESULT\]\s*(Neither|[ABNabn])", re.IGNORECASE)  # Matches "[RESULT] A", "B", "N", or "Neither"
+
+
+def parse_pairwise_result(match: re.Match | None) -> str | None:
+    """Parse a pairwise regex match into 'A', 'B', or 'tie'.
+
+    Returns None if no match was found.
+    """
+    if match is None:
+        return None
+    token = match.group(1).upper()
+    if token in ("N", "NEITHER"):
+        return "tie"
+    return token
 
 
 def load_rubric(dimension: str, persona: bool = False) -> str:
