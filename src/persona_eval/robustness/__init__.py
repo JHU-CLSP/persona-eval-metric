@@ -18,7 +18,13 @@ from persona_eval.robustness.perturbations import (  # noqa: F401
     ShortenProseTest,
 )
 from persona_eval.robustness.cache import PerturbationCache  # noqa: F401
-from persona_eval.robustness.runner import run_robustness  # noqa: F401
+from persona_eval.robustness.runner import (  # noqa: F401
+    generate_perturbations,
+    load_perturbations,
+    run_robustness,
+    save_perturbations,
+    score_perturbations,
+)
 from persona_eval.robustness.analysis import (  # noqa: F401
     analyze_robustness,
     print_robustness_report,

@@ -101,6 +101,18 @@ persona-eval robustness path/to/annotations.zip \
     --tests distractor incremental --metrics rouge \
     --num-samples 20 --seed 42 \
     --output-dir robustness_results/
+
+# Two-step workflow: generate perturbations first, evaluate later
+# Step 1: Generate perturbations only (no metrics computed)
+persona-eval robustness-generate --dataset arxiv \
+    --tests distractor incremental lengthen shorten \
+    --llm-model meta-llama/Meta-Llama-3-8B-Instruct \
+    --num-samples 50 --output-dir robustness_results/
+
+# Step 2: Evaluate metrics on saved perturbations (can re-run with different metrics)
+persona-eval robustness-eval \
+    --perturbations-dir robustness_results/perturbations \
+    --metrics rouge bertscore --output-dir robustness_results/
 ```
 
 See [docs/robustness-testing.md](docs/robustness-testing.md) for test descriptions, expected behaviors, analysis methodology, and extending with custom tests.
