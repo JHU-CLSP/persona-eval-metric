@@ -273,10 +273,15 @@ def load_from_huggingface(
         dataset_name, cfg["hf_id"], cfg["hf_config"], split,
     )
 
-    ds = load_dataset(
-        cfg["hf_id"], cfg["hf_config"], split=split,
-        trust_remote_code=True,  # needed for some legacy HF dataset scripts
-    )
+    try:
+        ds = load_dataset(
+            cfg["hf_id"], cfg["hf_config"], split=split,
+            trust_remote_code=True,  # needed for some legacy HF dataset scripts
+        )
+    except (TypeError, RuntimeError):
+        # Newer datasets versions removed trust_remote_code support;
+        # fall back to loading without it.
+        ds = load_dataset(cfg["hf_id"], cfg["hf_config"], split=split)
 
     if num_samples and num_samples < len(ds):
         ds = ds.shuffle(seed=seed).select(range(num_samples))

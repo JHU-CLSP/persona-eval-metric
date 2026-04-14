@@ -591,14 +591,8 @@ def cmd_robustness(args):
     cache = None
 
     # Check if any selected test needs an LLM
-    needs_llm = any(
-        ALL_TESTS[t](
-            **({"distractor_pool": [], "seed": args.seed} if t == "distractor" else {})
-        ).requires_llm
-        if t in ("lengthen", "shorten", "audience")
-        else False
-        for t in test_names
-    )
+    LLM_TESTS = {"lengthen", "shorten", "audience"}
+    needs_llm = bool(LLM_TESTS & set(test_names))
 
     if needs_llm:
         from persona_eval.llm_client import LLMClient
