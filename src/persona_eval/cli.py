@@ -668,6 +668,169 @@ def cmd_robustness(args):
     print_robustness_report(analysis_df)
 
 
+def cmd_robustness_generate(args):
+    """Generate perturbations only (no metric evaluation)."""
+    from persona_eval.robustness import (
+        ALL_TESTS,
+        PerturbationCache,
+        generate_perturbations,
+        load_from_persona_eval,
+        save_perturbations,
+    )
+    from persona_eval.robustness.dataset import load_from_huggingface
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load data
+    dataset_name = getattr(args, "dataset", None)
+    if dataset_name:
+        samples = load_from_huggingface(
+            dataset_name,
+            split=getattr(args, "split", None),
+            num_samples=args.num_samples,
+            seed=args.seed,
+        )
+        print(f"Loaded {len(samples)} samples from {dataset_name}")
+    elif args.annotations:
+        profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
+        samples = load_from_persona_eval(
+            entries, source_texts, reference_texts, profiles_by_id,
+        )
+        print(f"Loaded {len(samples)} samples")
+    else:
+        print("Error: provide either --dataset or annotations path")
+        return
+
+    # Optionally subsample
+    if args.num_samples and args.num_samples < len(samples):
+        import random
+        rng = random.Random(args.seed)
+        samples = rng.sample(samples, args.num_samples)
+        print(f"Subsampled to {len(samples)} samples (seed={args.seed})")
+
+    # Build perturbation tests
+    test_names = args.tests or list(ALL_TESTS.keys())
+    llm_client = None
+    cache = None
+
+    LLM_TESTS = {"lengthen", "shorten", "audience"}
+    needs_llm = bool(LLM_TESTS & set(test_names))
+
+    if needs_llm:
+        from persona_eval.llm_client import LLMClient
+        llm_kwargs = _collect_llm_kwargs(args)
+        llm_kwargs.pop("include_query", None)
+        llm_kwargs.pop("persona", None)
+        llm_kwargs.pop("prompt_file", None)
+        perturb_provider = getattr(args, "perturb_provider", None) or llm_kwargs.get("provider", "vllm")
+        perturb_model = getattr(args, "perturb_model", None) or llm_kwargs.get("model")
+        perturb_api_key = getattr(args, "perturb_api_key", None) or llm_kwargs.get("api_key")
+        perturb_base_url = getattr(args, "perturb_base_url", None) or llm_kwargs.get("base_url")
+        llm_client = LLMClient(
+            provider=perturb_provider,
+            model=perturb_model,
+            api_key=perturb_api_key,
+            base_url=perturb_base_url,
+        )
+        cache = PerturbationCache(args.cache_dir)
+
+    distractor_pool = [s.source for s in samples]
+
+    tests = []
+    for tn in test_names:
+        if tn not in ALL_TESTS:
+            print(f"Warning: unknown test '{tn}', skipping")
+            continue
+        if tn == "distractor":
+            tests.append(ALL_TESTS[tn](
+                distractor_pool=distractor_pool, seed=args.seed,
+            ))
+        elif tn == "incremental":
+            tests.append(ALL_TESTS[tn]())
+        elif tn == "audience":
+            tests.append(ALL_TESTS[tn](
+                llm_client=llm_client, cache=cache,
+                target_audiences=args.target_audiences,
+            ))
+        else:
+            tests.append(ALL_TESTS[tn](llm_client=llm_client, cache=cache))
+
+    # Generate and save
+    all_results = generate_perturbations(samples, tests)
+    perturb_dir = save_perturbations(all_results, samples, output_dir)
+    print(f"\nPerturbations saved to {perturb_dir}")
+    print("Run 'persona-eval robustness-eval' to evaluate metrics on these perturbations.")
+
+
+def cmd_robustness_eval(args):
+    """Evaluate metrics on previously generated perturbations."""
+    from persona_eval.robustness import (
+        ALL_TESTS,
+        analyze_robustness,
+        load_perturbations,
+        print_robustness_report,
+        score_perturbations,
+    )
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load saved perturbations
+    all_results, samples = load_perturbations(args.perturbations_dir)
+
+    # Reconstruct test objects (needed for expected_direction in analysis)
+    test_names_in_results = sorted(set(r.test_name for r in all_results))
+    tests = []
+    distractor_pool = [s.source for s in samples]
+    for tn in test_names_in_results:
+        if tn not in ALL_TESTS:
+            print(f"Warning: unknown test '{tn}' in saved perturbations, skipping analysis for it")
+            continue
+        if tn == "distractor":
+            tests.append(ALL_TESTS[tn](distractor_pool=distractor_pool))
+        elif tn == "incremental":
+            tests.append(ALL_TESTS[tn]())
+        elif tn in ("lengthen", "shorten"):
+            # These need llm_client/cache for generation, but we only need
+            # the object for expected_direction — pass None.
+            tests.append(ALL_TESTS[tn](llm_client=None, cache=None))
+        elif tn == "audience":
+            tests.append(ALL_TESTS[tn](llm_client=None, cache=None))
+
+    # Score
+    metric_names = _resolve_metrics(args.metrics, default=["rouge"])
+    metric_kwargs = {}
+    for key in ("provider", "model", "api_key", "base_url"):
+        attr = f"llm_{key}"
+        val = getattr(args, attr, None)
+        if val is not None:
+            metric_kwargs[key] = val
+    metric_kwargs["device"] = args.device
+
+    response_logger = _create_response_logger(output_dir / "scores.csv")
+
+    scores_df = score_perturbations(
+        all_results=all_results,
+        samples=samples,
+        metric_names=metric_names,
+        metric_kwargs=metric_kwargs,
+        output_dir=output_dir,
+        response_logger=response_logger,
+    )
+
+    if response_logger is not None:
+        response_logger.close()
+
+    # Analyze
+    analysis_df = analyze_robustness(scores_df, tests)
+    analysis_path = output_dir / "robustness_analysis.csv"
+    analysis_df.to_csv(analysis_path, index=False)
+    print(f"\nSaved analysis to {analysis_path}")
+
+    print_robustness_report(analysis_df)
+
+
 def cmd_run_all(args):
     """Run the full pipeline: fetch sources, compute metrics, correlate."""
     output_dir = Path(args.output_dir)
@@ -859,6 +1022,49 @@ def main():
     sp.add_argument("--target-audiences", nargs="+", default=None,
                     help="Target audiences for the audience rewrite test")
     sp.set_defaults(func=cmd_robustness)
+
+    # robustness-generate (perturbation generation only)
+    sp = subparsers.add_parser(
+        "robustness-generate",
+        help="Generate perturbations only (no metric evaluation)",
+    )
+    sp.add_argument("annotations", nargs="?", default=None,
+                    help="Path to annotations zip or directory (not needed with --dataset)")
+    sp.add_argument("--cache-dir", default="cache", help="Cache directory")
+    sp.add_argument("--email", help="Email for OpenAlex polite pool")
+    _add_llm_args(sp)
+    _add_perturb_llm_args(sp)
+    sp.add_argument("--output-dir", default="robustness_results", help="Output directory")
+    sp.add_argument(
+        "--dataset",
+        help="Load a standard dataset instead of annotations. "
+             "Available: arxiv, scitldr, pubmed, elife, plos, mup, scinews.",
+    )
+    sp.add_argument("--split", default=None,
+                    help="Dataset split to use (default: test, or dataset-specific default)")
+    sp.add_argument(
+        "--tests", nargs="+",
+        help="Robustness tests to run (default: all). "
+             "Choices: distractor, incremental, lengthen, shorten, audience",
+    )
+    sp.add_argument("--num-samples", type=int, default=None,
+                    help="Subsample N samples to limit compute")
+    sp.add_argument("--seed", type=int, default=42, help="Random seed")
+    sp.add_argument("--target-audiences", nargs="+", default=None,
+                    help="Target audiences for the audience rewrite test")
+    sp.set_defaults(func=cmd_robustness_generate)
+
+    # robustness-eval (evaluate metrics on saved perturbations)
+    sp = subparsers.add_parser(
+        "robustness-eval",
+        help="Evaluate metrics on previously generated perturbations",
+    )
+    sp.add_argument("--perturbations-dir", required=True,
+                    help="Path to saved perturbations directory (from robustness-generate)")
+    _add_metric_args(sp)
+    _add_llm_args(sp)
+    sp.add_argument("--output-dir", default="robustness_results", help="Output directory")
+    sp.set_defaults(func=cmd_robustness_eval)
 
     # run-all
     sp = subparsers.add_parser("run-all", help="Run full pipeline")
