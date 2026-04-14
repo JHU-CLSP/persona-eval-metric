@@ -18,6 +18,7 @@ from persona_eval.metrics.base import register_metric
 from persona_eval.metrics.base_llm import (
     BaseLLMMetric,
     PAIRWISE_RE,
+    parse_pairwise_result,
     PROMPTS_DIR,
 )
 
@@ -108,7 +109,7 @@ class LLMJudgeAnnotatorMetric(BaseLLMMetric):
         try:
             response_text = self._client.generate(prompt)
             match = PAIRWISE_RE.search(response_text)
-            result = match.group(1).upper() if match else None
+            result = parse_pairwise_result(match)
         except Exception:
             logger.warning("LLM judge annotator call failed, marking as tie")
             return {"llm_judge_annotator": "tie"}
