@@ -591,7 +591,7 @@ def cmd_robustness(args):
     cache = None
 
     # Check if any selected test needs an LLM
-    LLM_TESTS = {"lengthen", "shorten", "audience"}
+    LLM_TESTS = {"lengthen_prose", "shorten_prose", "different_audience"}
     needs_llm = bool(LLM_TESTS & set(test_names))
 
     if needs_llm:
@@ -620,19 +620,19 @@ def cmd_robustness(args):
         if tn not in ALL_TESTS:
             print(f"Warning: unknown test '{tn}', skipping")
             continue
-        if tn == "distractor":
+        if tn == "distractor_sentences":
             tests.append(ALL_TESTS[tn](
                 distractor_pool=distractor_pool, seed=args.seed,
             ))
-        elif tn == "incremental":
+        elif tn == "incremental_addition":
             tests.append(ALL_TESTS[tn]())
-        elif tn == "audience":
+        elif tn == "different_audience":
             tests.append(ALL_TESTS[tn](
                 llm_client=llm_client, cache=cache,
                 target_audiences=args.target_audiences,
             ))
         else:
-            # lengthen, shorten
+            # lengthen_prose, shorten_prose
             tests.append(ALL_TESTS[tn](llm_client=llm_client, cache=cache))
 
     # Run metrics
@@ -714,7 +714,7 @@ def cmd_robustness_generate(args):
     llm_client = None
     cache = None
 
-    LLM_TESTS = {"lengthen", "shorten", "audience"}
+    LLM_TESTS = {"lengthen_prose", "shorten_prose", "different_audience"}
     needs_llm = bool(LLM_TESTS & set(test_names))
 
     if needs_llm:
@@ -742,13 +742,13 @@ def cmd_robustness_generate(args):
         if tn not in ALL_TESTS:
             print(f"Warning: unknown test '{tn}', skipping")
             continue
-        if tn == "distractor":
+        if tn == "distractor_sentences":
             tests.append(ALL_TESTS[tn](
                 distractor_pool=distractor_pool, seed=args.seed,
             ))
-        elif tn == "incremental":
+        elif tn == "incremental_addition":
             tests.append(ALL_TESTS[tn]())
-        elif tn == "audience":
+        elif tn == "different_audience":
             tests.append(ALL_TESTS[tn](
                 llm_client=llm_client, cache=cache,
                 target_audiences=args.target_audiences,
@@ -787,15 +787,15 @@ def cmd_robustness_eval(args):
         if tn not in ALL_TESTS:
             print(f"Warning: unknown test '{tn}' in saved perturbations, skipping analysis for it")
             continue
-        if tn == "distractor":
+        if tn == "distractor_sentences":
             tests.append(ALL_TESTS[tn](distractor_pool=distractor_pool))
-        elif tn == "incremental":
+        elif tn == "incremental_addition":
             tests.append(ALL_TESTS[tn]())
-        elif tn in ("lengthen", "shorten"):
+        elif tn in ("lengthen_prose", "shorten_prose"):
             # These need llm_client/cache for generation, but we only need
             # the object for expected_direction — pass None.
             tests.append(ALL_TESTS[tn](llm_client=None, cache=None))
-        elif tn == "audience":
+        elif tn == "different_audience":
             tests.append(ALL_TESTS[tn](llm_client=None, cache=None))
 
     # Score
@@ -1014,7 +1014,7 @@ def main():
     sp.add_argument(
         "--tests", nargs="+",
         help="Robustness tests to run (default: all). "
-             "Choices: distractor, incremental, lengthen, shorten, audience",
+             "Choices: distractor_sentences, incremental_addition, lengthen_prose, shorten_prose, different_audience",
     )
     sp.add_argument("--num-samples", type=int, default=None,
                     help="Subsample N samples to limit compute")
@@ -1045,7 +1045,7 @@ def main():
     sp.add_argument(
         "--tests", nargs="+",
         help="Robustness tests to run (default: all). "
-             "Choices: distractor, incremental, lengthen, shorten, audience",
+             "Choices: distractor_sentences, incremental_addition, lengthen_prose, shorten_prose, different_audience",
     )
     sp.add_argument("--num-samples", type=int, default=None,
                     help="Subsample N samples to limit compute")
