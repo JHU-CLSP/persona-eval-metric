@@ -1,0 +1,12 @@
+Break down the following summary into a list of independent informational nuggets. Each nugget should be a single, self-contained piece of information -- a minimal, atomic statement that conveys one fact or claim.
+
+## Summary
+{summary}
+
+## Instructions
+List each informational nugget on its own line, prefixed with "- ". Output ONLY the list of nuggets, nothing else.
+
+Example format:
+- The study used a randomized controlled trial design.
+- The sample included 500 participants from three hospitals.
+- Treatment group showed 23% improvement over control.

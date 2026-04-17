@@ -1,0 +1,17 @@
+Determine whether the following informational nugget from a summary is relevant to the given persona and their query.
+
+A nugget is "relevant" if it addresses the persona's information needs, relates to their domain of expertise, or helps answer their query. A nugget is "not relevant" if it is unrelated to what this persona would care about.
+
+## Persona
+- Role: {role}
+- Domain: {domain}
+- Information needs: {info_needs}
+
+## Query
+{query}
+
+## Nugget
+{nugget}
+
+## Instructions
+Is this nugget relevant to the persona's needs and query? Respond with ONLY "relevant" or "not relevant".

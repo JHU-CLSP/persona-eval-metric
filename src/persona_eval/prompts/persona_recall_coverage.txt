@@ -1,0 +1,12 @@
+Determine whether the following informational requirement is covered by any of the summary nuggets below.
+
+A requirement is "covered" if any of the summary nuggets address the same information, even if phrased differently.
+
+## Requirement
+{requirement}
+
+## Summary Nuggets
+{nuggets}
+
+## Instructions
+Is the requirement addressed by any of the summary nuggets above? Respond with ONLY "covered" or "not covered".
