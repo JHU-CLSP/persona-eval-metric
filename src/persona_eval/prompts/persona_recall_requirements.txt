@@ -1,0 +1,24 @@
+You are given a persona description and their query about a source document. Generate a list of informational nugget requirements -- specific pieces of information that a good summary SHOULD contain to serve this persona's needs.
+
+Each requirement should be an atomic, specific piece of information that this persona would expect or need from a summary of the source document.
+
+## Persona
+- Role: {role}
+- Domain: {domain}
+- Information needs: {info_needs}
+
+## Query
+{query}
+
+## Source Document
+{source}
+
+## Instructions
+Based on the persona's background, information needs, and query, list the key informational nuggets that a good summary should include. Each nugget should be a single, specific piece of information from the source document.
+
+List each requirement on its own line, prefixed with "- ". Output ONLY the list of requirements, nothing else.
+
+Example format:
+- The main methodology used in the study.
+- Key quantitative results and effect sizes.
+- Limitations that affect practical application.

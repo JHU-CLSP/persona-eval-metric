@@ -13,25 +13,9 @@ from __future__ import annotations
 import logging
 
 from persona_eval.metrics.base import register_metric
-from persona_eval.metrics.base_llm import BaseLLMMetric, PROMPTS_DIR
+from persona_eval.metrics.base_llm import BaseLLMMetric, PROMPTS_DIR, parse_bullet_list
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_facts(response: str) -> list[str]:
-    """Parse bullet-pointed facts from the LLM response."""
-    facts = []
-    for line in response.strip().splitlines():
-        line = line.strip()
-        if line.startswith("- "):
-            line = line[2:].strip()
-        elif line.startswith("* "):
-            line = line[2:].strip()
-        else:
-            continue
-        if line:
-            facts.append(line)
-    return facts
 
 
 @register_metric("factscore")
@@ -58,7 +42,7 @@ class FACTScoreMetric(BaseLLMMetric):
     def _extract_facts(self, summary: str) -> list[str]:
         prompt = self._extract_template.format(summary=summary)
         response = self._client.generate(prompt)
-        facts = _parse_facts(response)
+        facts = parse_bullet_list(response)
 
         self._log_response(
             metric="factscore",

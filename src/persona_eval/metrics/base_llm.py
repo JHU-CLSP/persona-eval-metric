@@ -49,6 +49,25 @@ def load_prompt_template(
     return default_path.read_text()
 
 
+def parse_bullet_list(response: str) -> list[str]:
+    """Parse bullet-pointed items from an LLM response.
+
+    Recognizes lines starting with ``- `` or ``* ``.
+    """
+    items = []
+    for line in response.strip().splitlines():
+        line = line.strip()
+        if line.startswith("- "):
+            line = line[2:].strip()
+        elif line.startswith("* "):
+            line = line[2:].strip()
+        else:
+            continue
+        if line:
+            items.append(line)
+    return items
+
+
 class BaseLLMMetric(BaseMetric):
     """Base class for metrics that use an LLM backend.
 
