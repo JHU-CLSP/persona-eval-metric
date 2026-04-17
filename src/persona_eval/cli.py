@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -99,6 +101,12 @@ def _create_response_logger(output_path: str | Path):
     from persona_eval.response_logger import ResponseLogger
     log_dir = Path(output_path).parent / "llm_responses"
     return ResponseLogger(log_dir)
+
+
+def _save_run_params(path: Path, args) -> None:
+    """Write CLI arguments to a JSON file for reproducibility."""
+    params = {k: v for k, v in vars(args).items() if k != "func"}
+    path.write_text(json.dumps(params, indent=2, default=str))
 
 
 def _collect_llm_kwargs(args) -> dict:
@@ -512,9 +520,13 @@ def cmd_compute_metrics(args):
     """Compute automatic metrics for all summaries."""
     profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
     metric_names = _resolve_metrics(args.metrics)
+    output = Path(args.output)
+    output = output.parent / f"{output.stem}_run_{args.run_id}{output.suffix}"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _save_run_params(output.parent / f"{output.stem}_params.json", args)
     _compute_and_save(
         entries, source_texts, reference_texts, profiles_by_id,
-        metric_names, args, args.output,
+        metric_names, args, output,
     )
 
 
@@ -528,8 +540,12 @@ def cmd_correlate(args):
     if pairwise_prefs_path:
         pairwise_prefs_df = pd.read_csv(pairwise_prefs_path)
 
+    output_dir = Path(args.output_dir) / f"run_{args.run_id}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _save_run_params(output_dir / "run_params.json", args)
+
     agreement, agg, include_neither, neither_config, strict = _run_correlations(
-        entries, scores_df, pairwise_prefs_df, args, args.output_dir,
+        entries, scores_df, pairwise_prefs_df, args, output_dir,
     )
 
     print("\n=== Pairwise Agreement ===")
@@ -555,8 +571,9 @@ def cmd_robustness(args):
     )
     from persona_eval.robustness.dataset import load_from_huggingface
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / f"run_{args.run_id}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    _save_run_params(output_dir / "run_params.json", args)
 
     # Load data: either from --dataset or from annotations
     dataset_name = getattr(args, "dataset", None)
@@ -679,8 +696,9 @@ def cmd_robustness_generate(args):
     )
     from persona_eval.robustness.dataset import load_from_huggingface
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / f"run_{args.run_id}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    _save_run_params(output_dir / "run_params.json", args)
 
     # Load data
     dataset_name = getattr(args, "dataset", None)
@@ -773,8 +791,9 @@ def cmd_robustness_eval(args):
         score_perturbations,
     )
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / f"run_{args.run_id}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    _save_run_params(output_dir / "run_params.json", args)
 
     # Load saved perturbations
     all_results, samples = load_perturbations(args.perturbations_dir)
@@ -833,8 +852,9 @@ def cmd_robustness_eval(args):
 
 def cmd_run_all(args):
     """Run the full pipeline: fetch sources, compute metrics, correlate."""
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / f"run_{args.run_id}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    _save_run_params(output_dir / "run_params.json", args)
 
     # Load and fetch
     profiles_by_id, entries, source_texts, reference_texts = _load_data(args)
@@ -1082,6 +1102,7 @@ def main():
     else:
         logging.basicConfig(level=logging.INFO)
 
+    args.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     args.func(args)
 
 
