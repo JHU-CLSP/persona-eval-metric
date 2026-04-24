@@ -1,7 +1,9 @@
 """Shared LLM client supporting vLLM (local) and TogetherAI backends.
 
 Both backends expose OpenAI-compatible APIs, so we use the openai SDK
-as a unified client.
+as a unified client. This module also contains ``ResponseLogger``, the
+JSONL writer that records every prompt/response pair emitted by LLM
+metrics.
 """
 
 from __future__ import annotations
@@ -10,6 +12,8 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -139,3 +143,46 @@ def _parse_json_response(text: str) -> dict:
             pass
 
     raise ValueError(f"Could not parse JSON from LLM response: {text[:200]}")
+
+
+class ResponseLogger:
+    """Append-only JSONL logger for LLM interactions.
+
+    Each entry records the metric, prompt, full response text, and the
+    parsed result, along with arbitrary metadata (e.g. query_index,
+    dimension). One logger instance is shared across all LLM metrics
+    within a single CLI invocation.
+    """
+
+    def __init__(self, log_dir: str | Path):
+        self._log_dir = Path(log_dir)
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._path = self._log_dir / f"llm_responses_{timestamp}.jsonl"
+        self._file = open(self._path, "a", encoding="utf-8")
+        logger.info("Logging LLM responses to %s", self._path)
+
+    def log(
+        self,
+        metric: str,
+        prompt: str,
+        response: str,
+        parsed_result: str | float | dict | None = None,
+        **metadata,
+    ):
+        entry = {
+            "metric": metric,
+            "prompt": prompt,
+            "response": response,
+            "parsed_result": parsed_result,
+            **metadata,
+        }
+        self._file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        self._file.flush()
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def close(self):
+        self._file.close()

@@ -113,15 +113,40 @@ The model folder must contain two pickle files: one with `pyr` in the name
 
 ## Adding a metric
 
-To add any of the above metrics once its dependencies are installed, create a
-wrapper class in `src/persona_eval/metrics/summeval_metrics.py`:
+### summ-eval wrapper (most metrics above)
+
+Add an entry to the `SUMMEVAL_METRICS` list in
+`src/persona_eval/metrics/summeval_metrics.py`:
 
 ```python
+{
+    "key": "my_metric",
+    "name": "My Metric",
+    "import_path": "summ_eval.my_metric:MyMetric",
+    "output_fields": {"my_metric": "my_metric_field"},
+    "reference_free": False,   # omit to default to True
+    # Optional:
+    # "setup":        <callable>,  runs once before first load
+    # "init_kwargs":  lambda device: {...},
+    # "on_load":      lambda device: ...,
+}
+```
+
+Omit `output_fields` to pass the full result dict through (like DataStats).
+The `__init__.py` re-exports aren't needed — the module already registers
+all entries at import time.
+
+### Non-wrapper metrics
+
+For metrics that don't fit the summ-eval pattern, subclass `BaseMetric`
+(or one of the LLM bases in `metrics/base_llm.py`) in its own module:
+
+```python
+from persona_eval.metrics.base import BaseMetric, register_metric
+
+
 @register_metric("my_metric")
 class MyMetric(BaseMetric):
-    def __init__(self, **kwargs):
-        self._metric = None
-
     @property
     def name(self) -> str:
         return "My Metric"
@@ -132,15 +157,13 @@ class MyMetric(BaseMetric):
         # False -> receives concatenated titles
         return False
 
-    def _load(self):
-        if self._metric is None:
-            from summ_eval.my_metric import MyMetric as _M
-            self._metric = _M()
-
-    def score(self, summary: str, source: str) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {k: float(v) for k, v in result.items()}
+    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
+        ...
 ```
 
-Then import the module in `src/persona_eval/metrics/__init__.py` to register it.
+Then import the module in `src/persona_eval/metrics/__init__.py` so the
+decorator fires.
+
+See [CLAUDE.md](CLAUDE.md) for when to pick `BaseDimensionalLLMMetric`
+(per-dimension LLM judges) or `MultiStepLLMMetric` (multi-call pipelines)
+instead of `BaseMetric`.
