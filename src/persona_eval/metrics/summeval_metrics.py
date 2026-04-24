@@ -1,7 +1,15 @@
-"""Metric wrappers using the summ-eval package."""
+"""Metric wrappers for the summ-eval package.
+
+Eight wrappers follow the same pattern (lazy import → call
+``evaluate_example`` → pluck one or more fields), so they're defined
+declaratively in ``SUMMEVAL_METRICS`` and instantiated through a single
+``SummEvalWrapper`` class. METEOR is the exception (uses nltk, not the
+Java-based summ-eval implementation) and keeps its own class.
+"""
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import sys
@@ -19,7 +27,6 @@ def _ensure_summeval_path():
         se_dir = os.path.dirname(summ_eval.__file__)
         if se_dir not in sys.path:
             sys.path.insert(0, se_dir)
-        # SUPERT also checks the PYTHONPATH env var directly
         pythonpath = os.environ.get("PYTHONPATH", "")
         if se_dir not in pythonpath:
             os.environ["PYTHONPATH"] = se_dir + os.pathsep + pythonpath if pythonpath else se_dir
@@ -27,129 +34,153 @@ def _ensure_summeval_path():
         pass
 
 
-@register_metric("supert")
-class SupertMetric(BaseMetric):
-    """SUPERT: reference-free multi-document summarization metric (via summ-eval)."""
+def _load_class(import_path: str):
+    """Load ``module.path:ClassName`` lazily."""
+    module_name, class_name = import_path.split(":")
+    return getattr(importlib.import_module(module_name), class_name)
 
-    def __init__(self, device: str = "cpu", **kwargs):
-        self._metric = None
+
+class SummEvalWrapper(BaseMetric):
+    """Generic wrapper around ``summ_eval`` metrics driven by a config dict."""
+
+    def __init__(self, config: dict, device: str = "cpu", **kwargs):
+        self._config = config
         self._device = device
-
-    @property
-    def name(self) -> str:
-        return "SUPERT"
-
-    def _load(self):
-        if self._metric is None:
-            _ensure_summeval_path()
-            import torch
-
-            # summ-eval SUPERT uses the default torch device internally
-            if self._device != "cpu" and torch.cuda.is_available():
-                torch.cuda.set_device(self._device if self._device != "cuda" else 0)
-
-            from summ_eval.supert_metric import SupertMetric as _Supert
-
-            self._metric = _Supert()
-
-    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {"supert": float(result.get("supert", 0.0))}
-
-
-@register_metric("summaqa")
-class SummaQAMetric(BaseMetric):
-    """SummaQA: QA-based reference-free summarization metric (via summ-eval)."""
-
-    def __init__(self, device: str = "cpu", **kwargs):
-        self._metric = None
-        self._device = device
-
-    @property
-    def name(self) -> str:
-        return "SummaQA"
-
-    def _load(self):
-        if self._metric is None:
-            from summ_eval.summa_qa_metric import SummaQAMetric as _SummaQA
-            import transformers
-            transformers.logging.set_verbosity_error()
-
-            self._metric = _SummaQA(use_gpu=self._device != "cpu")
-
-    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {
-            "summaqa_avg_prob": float(result.get("summaqa_avg_prob", 0.0)),
-            "summaqa_avg_fscore": float(result.get("summaqa_avg_fscore", 0.0)),
-        }
-
-
-@register_metric("blanc")
-class BlancMetric(BaseMetric):
-    """BLANC: reference-free metric based on language model filling (via summ-eval)."""
-
-    def __init__(self, device: str = "cpu", **kwargs):
-        self._metric = None
-        self._device = device
-
-    @property
-    def name(self) -> str:
-        return "BLANC"
-
-    def _load(self):
-        if self._metric is None:
-            from summ_eval.blanc_metric import BlancMetric as _Blanc
-
-            self._metric = _Blanc(device=self._device)
-
-    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {"blanc": float(result.get("blanc", 0.0))}
-
-
-# ---------------------------------------------------------------------------
-# Reference-based metrics
-# ---------------------------------------------------------------------------
-
-
-@register_metric("chrf")
-class ChrfMetric(BaseMetric):
-    """ChrF++: character n-gram F-score metric (via summ-eval / sacrebleu)."""
-
-    def __init__(self, **kwargs):
         self._metric = None
 
     @property
     def name(self) -> str:
-        return "ChrF++"
+        return self._config["name"]
 
     @property
     def is_reference_free(self) -> bool:
-        return False
+        return self._config.get("reference_free", True)
 
     def _load(self):
-        if self._metric is None:
-            from summ_eval.chrfpp_metric import ChrfppMetric as _Chrf
-
-            self._metric = _Chrf()
+        if self._metric is not None:
+            return
+        setup = self._config.get("setup")
+        if setup is not None:
+            setup()
+        cls = _load_class(self._config["import_path"])
+        init_kwargs_fn = self._config.get("init_kwargs")
+        init_kwargs = init_kwargs_fn(self._device) if init_kwargs_fn else {}
+        # Handle SUPERT's implicit device-via-torch idiom.
+        on_load = self._config.get("on_load")
+        if on_load is not None:
+            on_load(self._device)
+        self._metric = cls(**init_kwargs)
 
     def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         self._load()
         result = self._metric.evaluate_example(summary, source)
-        return {"chrf": float(result.get("chrf", 0.0))}
+        output_fields = self._config.get("output_fields")
+        if output_fields is None:
+            # DataStats returns a dict of floats; pass through as-is.
+            return {k: float(v) for k, v in result.items()}
+        return {out_key: float(result.get(src_key, 0.0))
+                for out_key, src_key in output_fields.items()}
 
 
+def _supert_on_load(device: str):
+    import torch
+    if device != "cpu" and torch.cuda.is_available():
+        torch.cuda.set_device(device if device != "cuda" else 0)
+
+
+def _summaqa_init_kwargs(device: str) -> dict:
+    import transformers
+    transformers.logging.set_verbosity_error()
+    return {"use_gpu": device != "cpu"}
+
+
+def _blanc_init_kwargs(device: str) -> dict:
+    return {"device": device}
+
+
+SUMMEVAL_METRICS = [
+    {
+        "key": "supert",
+        "name": "SUPERT",
+        "import_path": "summ_eval.supert_metric:SupertMetric",
+        "output_fields": {"supert": "supert"},
+        "setup": _ensure_summeval_path,
+        "on_load": _supert_on_load,
+    },
+    {
+        "key": "summaqa",
+        "name": "SummaQA",
+        "import_path": "summ_eval.summa_qa_metric:SummaQAMetric",
+        "output_fields": {
+            "summaqa_avg_prob": "summaqa_avg_prob",
+            "summaqa_avg_fscore": "summaqa_avg_fscore",
+        },
+        "init_kwargs": _summaqa_init_kwargs,
+    },
+    {
+        "key": "blanc",
+        "name": "BLANC",
+        "import_path": "summ_eval.blanc_metric:BlancMetric",
+        "output_fields": {"blanc": "blanc"},
+        "init_kwargs": _blanc_init_kwargs,
+    },
+    {
+        "key": "chrf",
+        "name": "ChrF++",
+        "import_path": "summ_eval.chrfpp_metric:ChrfppMetric",
+        "output_fields": {"chrf": "chrf"},
+        "reference_free": False,
+    },
+    {
+        "key": "bleu",
+        "name": "BLEU",
+        "import_path": "summ_eval.bleu_metric:BleuMetric",
+        "output_fields": {"bleu": "bleu"},
+        "reference_free": False,
+    },
+    {
+        "key": "cider",
+        "name": "CIDEr",
+        "import_path": "summ_eval.cider_metric:CiderMetric",
+        "output_fields": {"cider": "cider"},
+        "reference_free": False,
+    },
+    {
+        "key": "data_stats",
+        "name": "DataStats",
+        "import_path": "summ_eval.data_stats_metric:DataStatsMetric",
+        # No output_fields: pass the full dict through.
+    },
+]
+
+
+def _make_wrapper(config: dict) -> type[BaseMetric]:
+    """Build a tiny BaseMetric subclass bound to one config entry.
+
+    A concrete subclass is used (rather than passing the config at
+    construction time) so that ``type(self).__name__`` used in
+    ``cache_config`` remains distinct per metric.
+    """
+    name = f"{config['key'].title().replace('_', '')}Metric"
+
+    class _Wrapper(SummEvalWrapper):
+        def __init__(self, device: str = "cpu", **kwargs):
+            super().__init__(config, device=device, **kwargs)
+
+    _Wrapper.__name__ = name
+    _Wrapper.__qualname__ = name
+    return _Wrapper
+
+
+for _cfg in SUMMEVAL_METRICS:
+    register_metric(_cfg["key"])(_make_wrapper(_cfg))
+
+
+# METEOR uses nltk's pure-Python implementation (no Java dep), so it's
+# its own class rather than a summ-eval wrapper entry.
 @register_metric("meteor")
 class MeteorMetric(BaseMetric):
-    """METEOR: alignment-based metric using synonyms and stemming (via nltk).
-
-    Uses nltk's pure-Python METEOR implementation instead of the Java-based
-    Meteor 1.5 JAR required by summ-eval, so no Java installation is needed.
-    """
+    """METEOR: alignment-based metric using synonyms and stemming (via nltk)."""
 
     def __init__(self, **kwargs):
         self._loaded = False
@@ -165,7 +196,6 @@ class MeteorMetric(BaseMetric):
     def _load(self):
         if not self._loaded:
             import nltk
-
             nltk.download("wordnet", quiet=True)
             nltk.download("omw-1.4", quiet=True)
             self._loaded = True
@@ -176,87 +206,4 @@ class MeteorMetric(BaseMetric):
 
         reference_tokens = source.split()
         hypothesis_tokens = summary.split()
-        score = meteor_score([reference_tokens], hypothesis_tokens)
-        return {"meteor": float(score)}
-
-
-@register_metric("bleu")
-class BleuMetric(BaseMetric):
-    """BLEU: n-gram precision metric (via summ-eval / sacrebleu)."""
-
-    def __init__(self, **kwargs):
-        self._metric = None
-
-    @property
-    def name(self) -> str:
-        return "BLEU"
-
-    @property
-    def is_reference_free(self) -> bool:
-        return False
-
-    def _load(self):
-        if self._metric is None:
-            from summ_eval.bleu_metric import BleuMetric as _Bleu
-
-            self._metric = _Bleu()
-
-    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {"bleu": float(result.get("bleu", 0.0))}
-
-
-@register_metric("cider")
-class CiderMetric(BaseMetric):
-    """CIDEr: consensus-based evaluation metric (via summ-eval)."""
-
-    def __init__(self, **kwargs):
-        self._metric = None
-
-    @property
-    def name(self) -> str:
-        return "CIDEr"
-
-    @property
-    def is_reference_free(self) -> bool:
-        return False
-
-    def _load(self):
-        if self._metric is None:
-            from summ_eval.cider_metric import CiderMetric as _Cider
-
-            self._metric = _Cider()
-
-    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {"cider": float(result.get("cider", 0.0))}
-
-
-# ---------------------------------------------------------------------------
-# Reference-free metrics
-# ---------------------------------------------------------------------------
-
-
-@register_metric("data_stats")
-class DataStatsMetric(BaseMetric):
-    """DataStats: extractive statistics — coverage, density, compression, novelty (via summ-eval)."""
-
-    def __init__(self, **kwargs):
-        self._metric = None
-
-    @property
-    def name(self) -> str:
-        return "DataStats"
-
-    def _load(self):
-        if self._metric is None:
-            from summ_eval.data_stats_metric import DataStatsMetric as _DS
-
-            self._metric = _DS()
-
-    def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
-        self._load()
-        result = self._metric.evaluate_example(summary, source)
-        return {k: float(v) for k, v in result.items()}
+        return {"meteor": float(meteor_score([reference_tokens], hypothesis_tokens))}

@@ -139,24 +139,32 @@ Additional metrics (MoverScore, SentenceMovers, ROUGE-WE, S3) require external s
 
 ```
 src/persona_eval/
-├── cli.py                    # CLI entry point
+├── cli/                      # CLI package: one module per subcommand
+│   ├── main.py               # argparse dispatcher (entry point)
+│   ├── _args.py              # Shared argparse fragments
+│   ├── _common.py            # Shared helpers (data loading, caches, etc.)
+│   └── <command>.py          # One file per subcommand
+├── core/
+│   ├── cache.py              # JsonFileCache base + hashing helpers
+│   └── pipeline.py           # Metric orchestration (build_tasks, compute_metric_scores, ...)
 ├── annotations.py            # Load annotation data, extract preferences
 ├── openalex.py               # Fetch paper abstracts/titles from OpenAlex
 ├── correlation.py            # Pairwise agreement + rank correlation
-├── llm_client.py             # Shared LLM client (vLLM / TogetherAI)
-├── response_logger.py        # JSONL logger for LLM interactions
+├── llm_client.py             # LLM client (vLLM / TogetherAI) + ResponseLogger
 ├── prompts/                  # LLM prompt templates and rubrics
 ├── metrics/                  # Metric implementations + registry
 │   ├── base.py               # BaseMetric ABC + @register_metric
-│   ├── base_llm.py           # BaseLLMMetric base class
-│   ├── cache.py              # Disk-based cache for metric results
+│   ├── base_llm.py           # BaseLLMMetric, BaseDimensionalLLMMetric, MultiStepLLMMetric
+│   ├── cache.py              # MetricCache (subclass of JsonFileCache)
 │   └── ...                   # Individual metric modules
 └── robustness/               # Robustness testing framework
     ├── dataset.py            # SummarizationSample + dataset adapters
     ├── perturbations.py      # 5 perturbation tests
-    ├── cache.py              # Disk-based LLM output cache
+    ├── cache.py              # PerturbationCache (subclass of JsonFileCache)
     ├── runner.py             # Test orchestrator
     └── analysis.py           # Effect analysis + reporting
 scripts/
 └── analyze_scores.py         # Metric score analysis and visualisation
 ```
+
+See [CLAUDE.md](CLAUDE.md) for architecture notes, extension points, and cache layout details.
