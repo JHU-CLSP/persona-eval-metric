@@ -118,6 +118,16 @@ persona-eval compute-metrics annotations.zip \
 | `--persona` | Enable persona-aware evaluation using annotator profiles | off |
 | `--include-query` | Include the annotator's query in LLM judge prompts | off |
 
+### Caching options
+
+| Flag | Description | Default |
+|---|---|---|
+| `--cache-dir` | Root directory for all caches (OpenAlex, metrics, LLM perturbations) | `cache` |
+| `--no-cache` | Disable the metric result cache for this run | cache enabled |
+| `--clear-metric-cache` | Delete all metric cache entries before running | off |
+
+See [Caching](#caching) below for how the cache works.
+
 ### Evaluation dimensions
 
 Both `llm_judge` and `llm_judge_relative` evaluate summaries on five dimensions:
@@ -279,6 +289,65 @@ python scripts/analyze_scores.py metric_scores.csv --no-plots
 
 **Saved plots:** distributions, boxplots by label, discriminative power, correlation heatmap, per-query heatmap.
 
+## Caching
+
+Two layers of caching make re-runs cheap and crash-resilient. Both are on by default.
+
+### 1. Metric result cache
+
+Per-summary metric outputs are stored on disk under `{cache-dir}/metrics/` as one JSON file per entry. The cache key is a SHA-256 hash of:
+
+- Metric name and its `cache_config()` (model, prompt file, persona flag, etc.)
+- Summary text
+- Source/reference text
+- Persona kwargs (for per-annotator runs)
+
+On a hit, `metric.score()` (or `score_pair()` for pairwise metrics) is not called. This works across invocations *and* across run modes -- a summary scored in annotation analysis is reused if the same `(summary, source)` pair shows up in robustness testing, and vice versa.
+
+```bash
+# Normal run (cache enabled, default)
+persona-eval compute-metrics annotations.zip --metrics llm_judge \
+    --llm-model my-model
+
+# Re-run: LLM calls are skipped for cached (summary, source) pairs
+persona-eval compute-metrics annotations.zip --metrics llm_judge \
+    --llm-model my-model
+# Output includes a per-metric line like: "cache: 240 hits / 0 misses"
+
+# Disable the cache for a single run
+persona-eval compute-metrics annotations.zip --metrics llm_judge \
+    --llm-model my-model --no-cache
+
+# Wipe the cache before running (e.g. after editing a prompt template)
+persona-eval compute-metrics annotations.zip --metrics llm_judge \
+    --llm-model my-model --clear-metric-cache
+```
+
+**What invalidates a cache entry?** Anything in `cache_config()`: changing the LLM model, flipping `--persona`, or pointing to a different `--llm-prompt-file` all produce new cache keys, leaving old entries untouched.
+
+**Caveat:** `cache_config()` records the prompt-file *path*, not its contents. If you edit a prompt template in place, the cache key doesn't change and you'll get stale results. Run with `--clear-metric-cache` (or delete the relevant files under `{cache-dir}/metrics/`) after editing a prompt.
+
+### 2. Output CSV as a checkpoint
+
+`compute-metrics` (and `run-all`) save the output CSV *progressively* -- after each metric finishes, not just at the end. On re-run, the tool reads the existing CSV and skips any metric whose sub-metric columns are already populated for every task.
+
+```bash
+# Initial run: ROUGE + BERTScore
+persona-eval compute-metrics annotations.zip --metrics rouge bertscore \
+    --output results/scores.csv
+
+# Add LLM Judge later; ROUGE and BERTScore are skipped
+persona-eval compute-metrics annotations.zip --metrics rouge bertscore llm_judge \
+    --llm-model my-model --output results/scores.csv
+# Output: "Skipping rouge (already in output CSV)"
+#         "Skipping bertscore (already in output CSV)"
+#         "Computing llm_judge..."
+```
+
+If a run crashes partway through, completed metrics are already saved -- re-running picks up where it left off. Pairwise preferences (`*_pairwise_prefs.csv`) are saved on the same cadence.
+
+**Note on `run-all` / `compute-metrics` output paths:** these commands append a `_run_{timestamp}` suffix, so each invocation writes a fresh file by default. To resume a prior run, reuse its output path explicitly.
+
 ## Adding a custom metric
 
 ```python
@@ -286,8 +355,9 @@ from persona_eval.metrics.base import BaseMetric, register_metric
 
 @register_metric("my_metric")
 class MyMetric(BaseMetric):
-    def __init__(self, **kwargs):
+    def __init__(self, model_name: str = "default", **kwargs):
         self._model = None
+        self._model_name = model_name
 
     @property
     def name(self) -> str:
@@ -299,6 +369,12 @@ class MyMetric(BaseMetric):
 
     def score(self, summary: str, source: str, persona_kwargs=None) -> dict[str, float]:
         return {"my_metric_score": 0.5}
+
+    def cache_config(self) -> dict:
+        # Override when your metric has extra constructor state that affects
+        # output. Defaults to {"class": type(self).__name__}, which is enough
+        # for metrics with no tunable knobs.
+        return {**super().cache_config(), "model_name": self._model_name}
 ```
 
 For LLM-backed metrics, inherit from `BaseLLMMetric` instead:
