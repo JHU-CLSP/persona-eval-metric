@@ -392,9 +392,9 @@ class DifferentAudienceTest(_LLMPerturbationTest):
 # ---------------------------------------------------------------------------
 
 ALL_TESTS = {
-    "distractor": DistractorSentenceTest,
-    "incremental": IncrementalAdditionTest,
-    "lengthen": LengthenProseTest,
-    "shorten": ShortenProseTest,
-    "audience": DifferentAudienceTest,
+    "distractor_sentences": DistractorSentenceTest,
+    "incremental_addition": IncrementalAdditionTest,
+    "lengthen_prose": LengthenProseTest,
+    "shorten_prose": ShortenProseTest,
+    "different_audience": DifferentAudienceTest,
 }
