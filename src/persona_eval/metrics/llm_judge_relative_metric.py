@@ -50,12 +50,20 @@ class LLMJudgeRelativeMetric(BaseLLMMetric):
     ):
         super().__init__(**kwargs)
         self._persona = persona
+        self._prompt_file = prompt_file
         self._prompt_template = load_prompt_template(
             prompt_file, _DEFAULT_RELATIVE_PROMPT_PATH,
             _PERSONA_RELATIVE_PROMPT_PATH, persona=persona,
         )
         self._rubrics = {
             dim: load_rubric(dim, persona=persona) for dim in _ALL_DIMENSIONS
+        }
+
+    def cache_config(self) -> dict:
+        return {
+            **super().cache_config(),
+            "persona": self._persona,
+            "prompt_file": self._prompt_file,
         }
 
     @property

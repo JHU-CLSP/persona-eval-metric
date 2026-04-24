@@ -120,3 +120,10 @@ class BaseLLMMetric(BaseMetric):
                 parsed_result=parsed_result,
                 **extra,
             )
+
+    def cache_config(self) -> dict:
+        return {
+            **super().cache_config(),
+            "provider": self._provider,
+            "model": self._model,
+        }

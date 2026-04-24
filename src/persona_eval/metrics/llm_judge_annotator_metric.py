@@ -46,7 +46,14 @@ class LLMJudgeAnnotatorMetric(BaseLLMMetric):
     ):
         super().__init__(**kwargs)
         from pathlib import Path
+        self._prompt_file = prompt_file
         self._prompt_template = Path(prompt_file).read_text() if prompt_file else _DEFAULT_PROMPT_PATH.read_text()
+
+    def cache_config(self) -> dict:
+        return {
+            **super().cache_config(),
+            "prompt_file": self._prompt_file,
+        }
 
     @property
     def name(self) -> str:

@@ -8,6 +8,7 @@ Evaluate how well automatic summarization metrics correlate with human pairwise 
 - **Robustness testing** -- systematically perturb summaries and verify that metrics respond as expected (scores drop with noise, stay stable under paraphrasing, etc.)
 - **LLM-as-judge** -- absolute grading, relative (pairwise) grading, annotator-focused evaluation, and FACTScore, via vLLM or TogetherAI
 - **Persona-aware evaluation** -- score summaries from the perspective of individual annotators using their role, domain, and information needs
+- **Result caching** -- metric outputs and the scores CSV are cached on disk by default, so re-runs (including after a crash or with a new metric added) skip already-computed work
 
 ## Requirements
 
@@ -148,6 +149,7 @@ src/persona_eval/
 ├── metrics/                  # Metric implementations + registry
 │   ├── base.py               # BaseMetric ABC + @register_metric
 │   ├── base_llm.py           # BaseLLMMetric base class
+│   ├── cache.py              # Disk-based cache for metric results
 │   └── ...                   # Individual metric modules
 └── robustness/               # Robustness testing framework
     ├── dataset.py            # SummarizationSample + dataset adapters

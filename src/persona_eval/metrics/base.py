@@ -141,3 +141,14 @@ class BaseMetric(ABC):
     ) -> list[dict[str, float]]:
         """Score a batch of summaries. Override for optimized batch processing."""
         return [self.score(s, src) for s, src in zip(summaries, sources)]
+
+    def cache_config(self) -> dict:
+        """Fingerprint of cache-affecting metric state.
+
+        Two metric instances with equal ``cache_config()`` output are
+        treated as interchangeable for caching. Override in subclasses
+        to include model, prompts, or other config that would change
+        metric output. The default covers plain metrics with no
+        extra state beyond the class itself.
+        """
+        return {"class": type(self).__name__}

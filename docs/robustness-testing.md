@@ -74,6 +74,8 @@ persona-eval robustness --dataset elife \
 | `--perturb-model` | Model for perturbation generation (overrides `--llm-model`) | same as `--llm-model` |
 | `--perturb-base-url` | Base URL for perturbation LLM (overrides `--llm-base-url`) | same as `--llm-base-url` |
 | `--perturb-api-key` | API key for perturbation LLM (overrides `--llm-api-key`) | same as `--llm-api-key` |
+| `--no-cache` | Disable the metric result cache for this run (see [Caching](#caching)) | cache enabled |
+| `--clear-metric-cache` | Delete all metric cache entries before running | off |
 
 You must provide either `annotations` or `--dataset`. LLM options are required when running tests that use LLM perturbations (lengthen, shorten, audience). The `--perturb-*` flags let you use a different model/provider for perturbation generation while `--llm-*` controls the evaluation metrics.
 
@@ -219,7 +221,27 @@ For each (test, metric) pair, the analysis computes:
 
 ## Caching
 
-LLM-generated perturbations (tests 3-5) are cached to disk under `{cache-dir}/robustness/`. Cache keys include a hash of the prompt template, so modifying a prompt automatically invalidates stale entries. Cached results are reused on subsequent runs, making it cheap to re-run with different metrics.
+Three layers of caching make re-runs cheap. All are on by default under `{cache-dir}/`.
+
+| Cache | Location | What it stores |
+|---|---|---|
+| LLM perturbations | `{cache-dir}/robustness/` | Output text of LLM-generated perturbations (tests 3-5). Keyed by prompt hash so editing a prompt auto-invalidates. |
+| Metric results | `{cache-dir}/metrics/` | Per-`(summary, source)` metric output (e.g. ROUGE, BERTScore, LLM Judge sub-scores). Shared across modes: a result computed during annotation analysis is reused in robustness testing, and vice versa. |
+| `robustness_scores.csv` | `{output-dir}/run_*/` | Acts as a checkpoint. On re-run, metrics whose columns are already populated for every `(sample_id, test_name, level)` are skipped. The file is rewritten after each metric completes. |
+
+Disable the metric cache for a single run with `--no-cache`. Wipe it with `--clear-metric-cache` (useful after editing a prompt template, since `cache_config()` tracks prompt-file path, not contents).
+
+```bash
+# Evaluate with a new metric on already-generated perturbations -- only the new
+# metric runs; prior ones are skipped via the CSV checkpoint
+persona-eval robustness-eval --perturbations-dir robustness_results/run_123/perturbations \
+    --metrics rouge bertscore llm_judge --llm-model my-model \
+    --output-dir robustness_results/run_123/
+
+# Force a clean recompute
+persona-eval robustness --dataset scitldr --metrics rouge \
+    --clear-metric-cache --output-dir robustness_results/
+```
 
 ## Dataset abstraction
 

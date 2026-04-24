@@ -30,6 +30,12 @@ class BertScoreMetric(BaseMetric):
     def is_reference_free(self) -> bool:
         return False
 
+    def cache_config(self) -> dict:
+        return {
+            **super().cache_config(),
+            "model_type": self._model_type,
+        }
+
     def _load(self):
         if self._scorer is None:
             import bert_score

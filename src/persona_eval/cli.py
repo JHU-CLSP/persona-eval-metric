@@ -24,6 +24,7 @@ from persona_eval.correlation import (
     compute_rank_correlation,
 )
 from persona_eval.metrics import get_metric, list_metrics, list_llm_metrics, list_non_llm_metrics
+from persona_eval.metrics.cache import MetricCache, config_hash
 from persona_eval.openalex import OpenAlexClient
 
 
@@ -131,20 +132,41 @@ def _compute_and_save(
     """Compute metrics and save results. Returns (scores_df, pairwise_prefs_df, response_logger)."""
     llm_kwargs = _collect_llm_kwargs(args)
     response_logger = _create_response_logger(output_path)
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
+
+    # Load existing output CSV to enable skip-on-re-run.
+    existing_df = pd.read_csv(output) if output.exists() else None
+    if existing_df is not None:
+        print(f"Found existing {output} ({len(existing_df)} rows); will skip already-computed metrics")
+
+    cache = _build_metric_cache(args)
+
+    def save_partial(scores_df: pd.DataFrame, prefs_df: pd.DataFrame | None):
+        if scores_df is not None and not scores_df.empty:
+            scores_df.to_csv(output, index=False)
+        if prefs_df is not None:
+            prefs_df.to_csv(prefs_path, index=False)
+
     scores_df, pairwise_prefs_df = _compute_metric_scores(
         entries, source_texts, reference_texts,
         metric_names, device=args.device,
         llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
         response_logger=response_logger,
+        cache=cache,
+        existing_df=existing_df,
+        on_metric_done=save_partial,
     )
 
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    scores_df.to_csv(output, index=False)
+    # Final save (covers the case where on_metric_done wasn't called — e.g.,
+    # empty metric list — and ensures the on-disk file matches the returned df).
+    if not scores_df.empty:
+        scores_df.to_csv(output, index=False)
     print(f"Saved metric scores to {output} ({len(scores_df)} rows)")
 
     if pairwise_prefs_df is not None:
-        prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
         pairwise_prefs_df.to_csv(prefs_path, index=False)
         print(f"Saved raw pairwise preferences to {prefs_path}")
 
@@ -153,6 +175,20 @@ def _compute_and_save(
         response_logger.close()
 
     return scores_df, pairwise_prefs_df
+
+
+def _build_metric_cache(args) -> "MetricCache | None":
+    """Build a MetricCache from CLI args. Returns ``None`` when disabled."""
+    cache_dir = getattr(args, "cache_dir", None)
+    if cache_dir is None:
+        return None
+    enabled = not getattr(args, "no_cache", False)
+    cache = MetricCache(cache_dir, enabled=enabled)
+    if enabled and getattr(args, "clear_metric_cache", False):
+        n = cache.clear()
+        if n:
+            print(f"Cleared {n} metric cache entries from {cache.cache_dir}")
+    return cache
 
 
 def _run_correlations(entries, scores_df, pairwise_prefs_df, args, output_dir):
@@ -187,10 +223,59 @@ def _run_correlations(entries, scores_df, pairwise_prefs_df, args, output_dir):
 # ---------------------------------------------------------------------------
 
 
+def _score_cached(
+    metric,
+    metric_name: str,
+    cfg_hash: str,
+    task: dict,
+    text_key: str,
+    cache: "MetricCache | None",
+) -> dict:
+    """Call ``metric.score`` through the cache."""
+    summary = task["summary"]
+    source = task[text_key]
+    pk = task.get("persona_kwargs")
+    if cache is not None:
+        hit = cache.get(metric_name, cfg_hash, summary, source, pk)
+        if hit is not None:
+            return hit
+    scores = metric.score(summary, source, persona_kwargs=pk)
+    if cache is not None:
+        cache.put(metric_name, cfg_hash, summary, source, pk, scores)
+    return scores
+
+
+def _score_pair_cached(
+    metric,
+    metric_name: str,
+    cfg_hash: str,
+    summary_a: str,
+    summary_b: str,
+    source: str,
+    persona_kwargs: dict | None,
+    cache: "MetricCache | None",
+) -> dict[str, str]:
+    """Call ``metric.score_pair`` through the cache."""
+    if cache is not None:
+        hit = cache.get_pair(
+            metric_name, cfg_hash, summary_a, summary_b, source, persona_kwargs,
+        )
+        if hit is not None:
+            return hit
+    prefs = metric.score_pair(summary_a, summary_b, source, persona_kwargs=persona_kwargs)
+    if cache is not None:
+        cache.put_pair(
+            metric_name, cfg_hash, summary_a, summary_b, source, persona_kwargs, prefs,
+        )
+    return prefs
+
+
 def _run_pairwise_comparisons(
     tasks: list[dict],
     metric,
     text_key: str,
+    metric_name: str | None = None,
+    cache: "MetricCache | None" = None,
 ) -> tuple[list[dict], list[dict]]:
     """Run pairwise comparisons mirroring the human annotation tournament.
 
@@ -209,6 +294,9 @@ def _run_pairwise_comparisons(
         tournament_scores: list of per-(query, label) dicts with
             tournament point columns for rank correlation.
     """
+    mn = metric_name or getattr(metric, "name", type(metric).__name__)
+    cfg_hash = config_hash(metric.cache_config())
+
     # Group tasks by query_index, keyed by label
     by_query: dict[int, dict[str, dict]] = {}
     for task in tasks:
@@ -230,11 +318,11 @@ def _run_pairwise_comparisons(
         pk = label_tasks["A"].get("persona_kwargs")
 
         # --- Round 1: A vs B ---
-        result_ab = metric.score_pair(
+        result_ab = _score_pair_cached(
+            metric, mn, cfg_hash,
             label_tasks["A"]["summary"],
             label_tasks["B"]["summary"],
-            source,
-            persona_kwargs=pk,
+            source, pk, cache,
         )
         if sub_metrics is None:
             sub_metrics = list(result_ab.keys())
@@ -242,11 +330,11 @@ def _run_pairwise_comparisons(
                 scores[l] = {sm: 0.0 for sm in sub_metrics}
 
         # --- Round 1: C vs D ---
-        result_cd = metric.score_pair(
+        result_cd = _score_pair_cached(
+            metric, mn, cfg_hash,
             label_tasks["C"]["summary"],
             label_tasks["D"]["summary"],
-            source,
-            persona_kwargs=pk,
+            source, pk, cache,
         )
 
         # Translate score_pair results ("A"/"B") to actual labels and store
@@ -300,11 +388,11 @@ def _run_pairwise_comparisons(
         pref_final_row = {"query_index": qi, "comparison": "final"}
 
         for (w_ab, w_cd), sms in final_pairs.items():
-            result_final = metric.score_pair(
+            result_final = _score_pair_cached(
+                metric, mn, cfg_hash,
                 label_tasks[w_ab]["summary"],
                 label_tasks[w_cd]["summary"],
-                source,
-                persona_kwargs=pk,
+                source, pk, cache,
             )
             for sm in sms:
                 pref_final = result_final[sm]
@@ -390,6 +478,61 @@ def _build_tasks(
     return tasks
 
 
+def _merge_score_dfs(all_dfs: list[pd.DataFrame]) -> pd.DataFrame:
+    """Merge per-metric DataFrames into one row per (annotator_id?, query_index, label)."""
+    if not all_dfs:
+        return pd.DataFrame()
+    merged = all_dfs[0]
+    for df in all_dfs[1:]:
+        merge_cols = ["query_index", "label"]
+        if "annotator_id" in merged.columns and "annotator_id" in df.columns:
+            merge_cols.insert(0, "annotator_id")
+        # Columns overlapping between merged and df (other than merge_cols) should
+        # be unified — prefer the latest computed value from df.
+        overlap = [
+            c for c in df.columns
+            if c in merged.columns and c not in merge_cols
+        ]
+        if overlap:
+            merged = merged.drop(columns=overlap)
+        merged = merged.merge(df, on=merge_cols, how="outer")
+    return merged
+
+
+def _metric_already_complete(
+    existing_df: pd.DataFrame | None,
+    tasks: list[dict],
+    sub_metric_cols: list[str],
+) -> bool:
+    """Whether ``existing_df`` has non-null values for ``sub_metric_cols``
+    for every task in ``tasks``.
+
+    If yes, the caller can skip re-running the metric.
+    """
+    if existing_df is None or existing_df.empty or not sub_metric_cols:
+        return False
+    if any(c not in existing_df.columns for c in sub_metric_cols):
+        return False
+
+    group_cols = ["query_index", "label"]
+    if "annotator_id" in existing_df.columns and any("annotator_id" in t for t in tasks):
+        group_cols = ["annotator_id", "query_index", "label"]
+
+    indexed = existing_df.set_index(group_cols)
+    for task in tasks:
+        key = tuple(task[c] for c in group_cols)
+        if key not in indexed.index:
+            return False
+        row = indexed.loc[key]
+        if hasattr(row, "iloc") and hasattr(row, "ndim") and row.ndim > 1:
+            row = row.iloc[0]
+        for col in sub_metric_cols:
+            val = row[col]
+            if pd.isna(val):
+                return False
+    return True
+
+
 def _compute_metric_scores(
     entries: list[AnnotationEntry],
     source_texts: dict[int, str],
@@ -399,8 +542,20 @@ def _compute_metric_scores(
     llm_kwargs: dict | None = None,
     profiles_by_id: dict[str, AnnotatorProfile] | None = None,
     response_logger=None,
+    cache: "MetricCache | None" = None,
+    existing_df: pd.DataFrame | None = None,
+    on_metric_done=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """Compute metric scores for all (query, summary) pairs.
+
+    Args:
+        cache: Optional ``MetricCache``. When provided, per-metric results
+            are read from / written to the cache.
+        existing_df: Optional ``scores_df`` from a prior run. Metrics whose
+            sub-metric columns are already fully populated will be skipped.
+        on_metric_done: Optional ``(scores_df, pairwise_prefs_df) -> None``
+            callback invoked after each metric finishes. Used by the caller
+            to write the output CSV incrementally.
 
     Returns:
         Tuple of (scores_df, pairwise_prefs_df).
@@ -434,27 +589,59 @@ def _compute_metric_scores(
     all_dfs = []
     all_raw_prefs = []
 
+    if existing_df is not None and not existing_df.empty:
+        all_dfs.append(existing_df.copy())
+
     for metric_name in metric_names:
-        print(f"Computing {metric_name}...")
         kwargs = {"device": device, **llm_kwargs}
         if response_logger is not None:
             kwargs["response_logger"] = response_logger
         metric = get_metric(metric_name, **kwargs)
         text_key = "source" if metric.is_reference_free else "reference"
         tasks = get_tasks(per_annotator=metric.needs_persona)
+        cfg_hash = config_hash(metric.cache_config())
+
+        if cache is not None:
+            cache.reset_counters()
 
         rows = []
         if metric.is_pairwise:
+            print(f"Computing {metric_name}...")
             raw_prefs, score_rows = _run_pairwise_comparisons(
                 tasks, metric, text_key,
+                metric_name=metric_name, cache=cache,
             )
             all_raw_prefs.extend(raw_prefs)
             rows.extend(score_rows)
         else:
-            for task in tqdm(tasks, desc=metric_name):
-                scores = metric.score(
-                    task["summary"], task[text_key],
-                    persona_kwargs=task.get("persona_kwargs"),
+            if not tasks:
+                continue
+
+            # Compute the first task to learn the sub-metric column names,
+            # then decide whether to skip the rest via existing_df.
+            task0 = tasks[0]
+            first_scores = _score_cached(
+                metric, metric_name, cfg_hash, task0, text_key, cache,
+            )
+            sub_metric_cols = list(first_scores.keys())
+
+            if _metric_already_complete(existing_df, tasks, sub_metric_cols):
+                print(f"Skipping {metric_name} (already in output CSV)")
+                continue
+
+            print(f"Computing {metric_name}...")
+            row0 = {
+                "query_index": task0["query_index"],
+                "label": task0["label"],
+                **first_scores,
+            }
+            if "annotator_id" in task0:
+                row0["annotator_id"] = task0["annotator_id"]
+            rows.append(row0)
+
+            for task in tqdm(tasks[1:], desc=metric_name):
+                scores = _score_cached(
+                    metric, metric_name, cfg_hash, task, text_key, cache,
                 )
                 row = {
                     "query_index": task["query_index"],
@@ -465,6 +652,9 @@ def _compute_metric_scores(
                     row["annotator_id"] = task["annotator_id"]
                 rows.append(row)
 
+        if cache is not None and (cache.hits or cache.misses):
+            print(f"  cache: {cache.hits} hits / {cache.misses} misses")
+
         if rows:
             df = pd.DataFrame(rows)
             group_cols = ["query_index", "label"]
@@ -473,17 +663,12 @@ def _compute_metric_scores(
             df = df.groupby(group_cols, as_index=False).first()
             all_dfs.append(df)
 
-    # Merge all metric DataFrames into one row per key
-    if not all_dfs:
-        scores_df = pd.DataFrame()
-    else:
-        scores_df = all_dfs[0]
-        for df in all_dfs[1:]:
-            merge_cols = ["query_index", "label"]
-            if "annotator_id" in scores_df.columns and "annotator_id" in df.columns:
-                merge_cols.insert(0, "annotator_id")
-            scores_df = scores_df.merge(df, on=merge_cols, how="outer")
+        if on_metric_done is not None:
+            partial_scores = _merge_score_dfs(all_dfs)
+            partial_prefs = pd.DataFrame(all_raw_prefs) if all_raw_prefs else None
+            on_metric_done(partial_scores, partial_prefs)
 
+    scores_df = _merge_score_dfs(all_dfs)
     pairwise_prefs_df = pd.DataFrame(all_raw_prefs) if all_raw_prefs else None
 
     return scores_df, pairwise_prefs_df
@@ -663,6 +848,7 @@ def cmd_robustness(args):
     metric_kwargs["device"] = args.device
 
     response_logger = _create_response_logger(output_dir / "scores.csv")
+    metric_cache = _build_metric_cache(args)
 
     scores_df = run_robustness(
         samples=samples,
@@ -671,6 +857,7 @@ def cmd_robustness(args):
         metric_kwargs=metric_kwargs,
         output_dir=output_dir,
         response_logger=response_logger,
+        cache=metric_cache,
     )
 
     if response_logger is not None:
@@ -828,6 +1015,7 @@ def cmd_robustness_eval(args):
     metric_kwargs["device"] = args.device
 
     response_logger = _create_response_logger(output_dir / "scores.csv")
+    metric_cache = _build_metric_cache(args)
 
     scores_df = score_perturbations(
         all_results=all_results,
@@ -836,6 +1024,7 @@ def cmd_robustness_eval(args):
         metric_kwargs=metric_kwargs,
         output_dir=output_dir,
         response_logger=response_logger,
+        cache=metric_cache,
     )
 
     if response_logger is not None:
@@ -903,6 +1092,14 @@ def _add_metric_args(parser):
     """Add metric selection arguments."""
     parser.add_argument("--metrics", nargs="+", help="Metrics to compute (default: all). Use 'all' for all metrics, 'non-llm' for non-LLM metrics, 'all-llm' for LLM-based metrics.")
     parser.add_argument("--device", default="cpu", help="Device for model inference (cpu, cuda, cuda:0, etc.)")
+    parser.add_argument(
+        "--no-cache", action="store_true",
+        help="Disable the metric result cache (cache is on by default).",
+    )
+    parser.add_argument(
+        "--clear-metric-cache", action="store_true",
+        help="Delete all entries from the metric cache before running.",
+    )
 
 
 def _add_llm_args(parser):
@@ -1081,6 +1278,7 @@ def main():
     )
     sp.add_argument("--perturbations-dir", required=True,
                     help="Path to saved perturbations directory (from robustness-generate)")
+    sp.add_argument("--cache-dir", default="cache", help="Cache directory")
     _add_metric_args(sp)
     _add_llm_args(sp)
     sp.add_argument("--output-dir", default="robustness_results", help="Output directory")
