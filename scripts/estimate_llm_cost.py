@@ -109,7 +109,8 @@ def main():
     p.add_argument("--device", default="cpu")
 
     # LLM config (mirrors add_llm_args, minus --no-cache controls).
-    p.add_argument("--llm-provider", default="together", choices=["vllm", "together"])
+    from persona_eval.llm_client import PROVIDERS
+    p.add_argument("--llm-provider", default="together", choices=list(PROVIDERS))
     p.add_argument("--llm-model", required=True)
     p.add_argument("--llm-api-key", default="dry-run-fake-key")
     p.add_argument("--llm-base-url")
