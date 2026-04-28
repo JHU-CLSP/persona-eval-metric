@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dry-run the LLM-based metrics pipeline to estimate Together AI cost.
+"""Dry-run the LLM-based metrics pipeline to estimate API cost.
 
 Walks the same code paths as ``persona-eval compute-metrics`` but
 intercepts every ``LLMClient.generate`` call: instead of hitting the
@@ -49,10 +49,11 @@ from persona_eval.core.pipeline import compute_metric_scores
 from persona_eval.metrics import list_llm_metrics
 
 
-# Together AI pricing (USD per 1M tokens) — current as of 2026-04.
+# Default pricing (USD per 1M tokens) — current as of 2026-04.
 # Format: model_name -> (input_price, output_price). Verify before
 # trusting; pass --input-price/--output-price to override.
 DEFAULT_PRICING: dict[str, tuple[float, float]] = {
+    # Together AI
     "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo": (0.18, 0.18),
     "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": (0.88, 0.88),
     "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo": (3.50, 3.50),
@@ -62,6 +63,15 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "deepseek-ai/DeepSeek-V3": (1.25, 1.25),
     "deepseek-ai/DeepSeek-V4-Pro": (2.10, 4.40),
     "mistralai/Mixtral-8x7B-Instruct-v0.1": (0.60, 0.60),
+    # OpenAI
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4-turbo": (10.00, 30.00),
+    "gpt-4": (30.00, 60.00),
+    "gpt-3.5-turbo": (0.50, 1.50),
+    "o1": (15.00, 60.00),
+    "o1-mini": (3.00, 12.00),
+    "o3-mini": (1.10, 4.40),
     "moonshotai/Kimi-K2.6": (1.20, 4.50),
 }
 
@@ -97,7 +107,7 @@ def _make_token_counter():
 
 def main():
     p = argparse.ArgumentParser(
-        description="Dry-run cost estimation for LLM metrics on Together AI",
+        description="Dry-run cost estimation for LLM metrics",
     )
     p.add_argument("annotations", help="Path to annotations zip or directory")
     p.add_argument("--cache-dir", default="cache")

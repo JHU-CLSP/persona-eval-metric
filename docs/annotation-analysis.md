@@ -110,9 +110,9 @@ persona-eval compute-metrics annotations.zip \
 
 | Flag | Description | Default |
 |---|---|---|
-| `--llm-provider` | Backend: `vllm`, `together`, or `anthropic` | `vllm` |
+| `--llm-provider` | Backend: `vllm`, `together`, `openai`, or `anthropic` | `vllm` |
 | `--llm-model` | Model name/path (required for LLM metrics) | -- |
-| `--llm-api-key` | API key (or use `TOGETHER_API_KEY` / `ANTHROPIC_API_KEY` env var) | `EMPTY` for vLLM |
+| `--llm-api-key` | API key (or use `TOGETHER_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env var) | `EMPTY` for vLLM |
 | `--llm-base-url` | Override API base URL | `localhost:8000/v1` (vLLM) |
 | `--llm-prompt-file` | Custom prompt template for `llm_judge` | built-in default |
 | `--persona` | Enable persona-aware evaluation using annotator profiles | off |
