@@ -66,10 +66,10 @@ persona-eval robustness --dataset elife \
 | `--target-audiences` | Target audiences for the audience test | 3 defaults |
 | `--output-dir` | Output directory | `robustness_results/` |
 | `--cache-dir` | Cache directory for LLM outputs and OpenAlex | `cache` |
-| `--llm-provider` | LLM backend for perturbation generation (`vllm` or `together`) | `vllm` |
+| `--llm-provider` | LLM backend for perturbation generation (`vllm`, `together`, or `anthropic`) | `vllm` |
 | `--llm-model` | Model name or path | -- |
 | `--llm-base-url` | Override API base URL | `http://localhost:8000/v1` (vllm) |
-| `--llm-api-key` | API key (or set `TOGETHER_API_KEY` env var) | -- |
+| `--llm-api-key` | API key (or set `TOGETHER_API_KEY` / `ANTHROPIC_API_KEY` env var) | -- |
 | `--perturb-provider` | LLM provider for perturbation generation (overrides `--llm-provider`) | same as `--llm-provider` |
 | `--perturb-model` | Model for perturbation generation (overrides `--llm-model`) | same as `--llm-model` |
 | `--perturb-base-url` | Base URL for perturbation LLM (overrides `--llm-base-url`) | same as `--llm-base-url` |
