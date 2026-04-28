@@ -196,17 +196,67 @@ def run_correlations(entries, scores_df, pairwise_prefs_df, args, output_dir):
 _LLM_PERTURB_TESTS = {"lengthen_prose", "shorten_prose", "different_audience"}
 
 
+def _samples_cache_path(args) -> Path | None:
+    """Return the path where this run's sample selection should be cached.
+
+    Returns ``None`` when no cache_dir is set or no subsampling is requested
+    (in which case there is no selection worth persisting).
+    """
+    cache_dir = getattr(args, "cache_dir", None)
+    if cache_dir is None or not getattr(args, "num_samples", None):
+        return None
+    from persona_eval.core.cache import JsonFileCache
+    parts = [
+        f"dataset={getattr(args, 'dataset', None) or ''}",
+        f"split={getattr(args, 'split', None) or ''}",
+        f"annotations={getattr(args, 'annotations', None) or ''}",
+        f"num_samples={args.num_samples}",
+        f"seed={args.seed}",
+    ]
+    key = JsonFileCache._hash_key(*parts)
+    d = Path(cache_dir) / "sample_selections"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{key}.json"
+
+
+def _read_cached_sample_ids(path: Path) -> list[str] | None:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    ids = data.get("sample_ids")
+    return list(ids) if isinstance(ids, list) and ids else None
+
+
 def load_samples(args):
-    """Load samples for robustness from either ``--dataset`` or annotations."""
+    """Load samples for robustness from either ``--dataset`` or annotations.
+
+    When ``--num-samples`` is set, the chosen sample IDs are persisted to
+    ``{cache_dir}/sample_selections/{hash}.json`` and reused on subsequent
+    runs with the same dataset/split/annotations/num_samples/seed. Pass
+    ``--no-sample-cache`` to skip both reading and writing the selection.
+    """
     from persona_eval.robustness import load_from_persona_eval
     from persona_eval.robustness.dataset import load_from_huggingface
+
+    use_cache = not getattr(args, "no_sample_cache", False)
+    cache_path = _samples_cache_path(args) if use_cache else None
+    cached_ids = (
+        _read_cached_sample_ids(cache_path)
+        if cache_path is not None and cache_path.exists()
+        else None
+    )
+
+    # If we have a cached selection, load the full dataset so we can filter
+    # to those exact IDs; otherwise pass num_samples through for HF efficiency.
+    hf_num_samples = None if cached_ids else args.num_samples
 
     dataset_name = getattr(args, "dataset", None)
     if dataset_name:
         samples = load_from_huggingface(
             dataset_name,
             split=getattr(args, "split", None),
-            num_samples=args.num_samples,
+            num_samples=hf_num_samples,
             seed=args.seed,
         )
         print(f"Loaded {len(samples)} samples from {dataset_name}")
@@ -220,11 +270,40 @@ def load_samples(args):
         print("Error: provide either --dataset or annotations path")
         return None
 
+    if cached_ids:
+        by_id = {s.sample_id: s for s in samples}
+        missing = [sid for sid in cached_ids if sid not in by_id]
+        if missing:
+            print(
+                f"Warning: {len(missing)} cached sample IDs not found in source; "
+                f"falling back to fresh selection"
+            )
+            cached_ids = None
+        else:
+            samples = [by_id[sid] for sid in cached_ids]
+            print(f"Loaded {len(samples)} cached sample selection from {cache_path}")
+            return samples
+
     if args.num_samples and args.num_samples < len(samples):
         import random
         rng = random.Random(args.seed)
         samples = rng.sample(samples, args.num_samples)
         print(f"Subsampled to {len(samples)} samples (seed={args.seed})")
+
+    if cache_path is not None and args.num_samples:
+        try:
+            cache_path.write_text(json.dumps({
+                "dataset": getattr(args, "dataset", None),
+                "split": getattr(args, "split", None),
+                "annotations": getattr(args, "annotations", None),
+                "num_samples": args.num_samples,
+                "seed": args.seed,
+                "sample_ids": [s.sample_id for s in samples],
+            }, indent=2))
+            print(f"Saved sample selection to {cache_path}")
+        except OSError as e:
+            print(f"Warning: failed to save sample selection: {e}")
+
     return samples
 
 

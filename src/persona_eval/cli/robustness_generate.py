@@ -44,6 +44,11 @@ def register(subparsers):
     sp.add_argument("--num-samples", type=int, default=None,
                     help="Subsample N samples to limit compute")
     sp.add_argument("--seed", type=int, default=42, help="Random seed")
+    sp.add_argument(
+        "--no-sample-cache", action="store_true",
+        help="Don't read or write the cached sample-selection file "
+             "under {cache_dir}/sample_selections/",
+    )
     sp.add_argument("--target-audiences", nargs="+", default=None,
                     help="Target audiences for the audience rewrite test")
     sp.set_defaults(func=run)
