@@ -1,9 +1,10 @@
-"""Shared LLM client supporting vLLM, TogetherAI, and Anthropic backends.
+"""Shared LLM client supporting vLLM, TogetherAI, OpenAI, and Anthropic backends.
 
-vLLM and TogetherAI expose OpenAI-compatible APIs and use the openai
-SDK; Anthropic uses its native SDK (``anthropic.Anthropic``). This
-module also contains ``ResponseLogger``, the JSONL writer that records
-every prompt/response pair emitted by LLM metrics.
+vLLM, TogetherAI, and OpenAI all use the openai SDK (the first two
+expose OpenAI-compatible APIs); Anthropic uses its native SDK
+(``anthropic.Anthropic``). This module also contains
+``ResponseLogger``, the JSONL writer that records every prompt/response
+pair emitted by LLM metrics.
 """
 
 from __future__ import annotations
@@ -26,6 +27,10 @@ _PROVIDER_DEFAULTS = {
         "base_url": "https://api.together.xyz/v1",
         "api_key_env": "TOGETHER_API_KEY",
     },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+    },
     "anthropic": {
         "base_url": "https://api.anthropic.com",
         "api_key_env": "ANTHROPIC_API_KEY",
@@ -36,7 +41,7 @@ PROVIDERS = tuple(_PROVIDER_DEFAULTS)
 
 
 class LLMClient:
-    """Unified LLM client for vLLM and TogetherAI."""
+    """Unified LLM client for vLLM, TogetherAI, OpenAI, and Anthropic."""
 
     def __init__(
         self,

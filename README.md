@@ -34,7 +34,7 @@ python -m spacy download en_core_web_sm
 
 ### LLM backend setup
 
-LLM-based metrics and robustness tests that use LLM perturbations require one of: a local [vLLM](https://docs.vllm.ai/) server, a [TogetherAI](https://www.together.ai/) API key, or an [Anthropic](https://www.anthropic.com/) API key.
+LLM-based metrics and robustness tests that use LLM perturbations require one of: a local [vLLM](https://docs.vllm.ai/) server, a [TogetherAI](https://www.together.ai/) API key, an [OpenAI](https://platform.openai.com/) API key, or an [Anthropic](https://www.anthropic.com/) API key.
 
 **vLLM (local):**
 
@@ -47,6 +47,13 @@ vllm serve meta-llama/Meta-Llama-3-8B-Instruct --port 8000
 
 ```bash
 export TOGETHER_API_KEY=your-key-here
+```
+
+**OpenAI:**
+
+```bash
+export OPENAI_API_KEY=your-key-here
+# then pass --llm-provider openai --llm-model gpt-4o
 ```
 
 **Anthropic:**

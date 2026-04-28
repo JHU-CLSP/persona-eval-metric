@@ -43,8 +43,8 @@ def add_llm_args(parser):
     group.add_argument(
         "--llm-api-key",
         help=(
-            "API key (or set TOGETHER_API_KEY / ANTHROPIC_API_KEY env var "
-            "for the corresponding provider)"
+            "API key (or set TOGETHER_API_KEY / OPENAI_API_KEY / "
+            "ANTHROPIC_API_KEY env var for the corresponding provider)"
         ),
     )
     group.add_argument(
