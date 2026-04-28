@@ -60,7 +60,9 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "Qwen/Qwen2.5-72B-Instruct-Turbo": (1.20, 1.20),
     "Qwen/Qwen2.5-7B-Instruct-Turbo": (0.30, 0.30),
     "deepseek-ai/DeepSeek-V3": (1.25, 1.25),
+    "deepseek-ai/DeepSeek-V4-Pro": (2.10, 4.40),
     "mistralai/Mixtral-8x7B-Instruct-v0.1": (0.60, 0.60),
+    "moonshotai/Kimi-K2.6": (1.20, 4.50),
 }
 
 
