@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from persona_eval.llm_client import PROVIDERS
+
 
 def add_data_args(parser):
     parser.add_argument("annotations", help="Path to annotations zip or directory")
@@ -31,7 +33,7 @@ def add_metric_args(parser):
 def add_llm_args(parser):
     group = parser.add_argument_group("LLM options (for llm_judge and factscore metrics)")
     group.add_argument(
-        "--llm-provider", choices=["vllm", "together"], default="vllm",
+        "--llm-provider", choices=list(PROVIDERS), default="vllm",
         help="LLM backend provider (default: vllm)",
     )
     group.add_argument(
@@ -40,7 +42,10 @@ def add_llm_args(parser):
     )
     group.add_argument(
         "--llm-api-key",
-        help="API key (or set TOGETHER_API_KEY env var for together provider)",
+        help=(
+            "API key (or set TOGETHER_API_KEY / ANTHROPIC_API_KEY env var "
+            "for the corresponding provider)"
+        ),
     )
     group.add_argument(
         "--llm-base-url",
@@ -65,7 +70,7 @@ def add_perturb_llm_args(parser):
         "Perturbation LLM options (override --llm-* for perturbation generation)"
     )
     group.add_argument(
-        "--perturb-provider", choices=["vllm", "together"],
+        "--perturb-provider", choices=list(PROVIDERS),
         help="LLM provider for perturbation generation (default: same as --llm-provider)",
     )
     group.add_argument(

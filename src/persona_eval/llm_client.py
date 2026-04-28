@@ -1,9 +1,9 @@
-"""Shared LLM client supporting vLLM (local) and TogetherAI backends.
+"""Shared LLM client supporting vLLM, TogetherAI, and Anthropic backends.
 
-Both backends expose OpenAI-compatible APIs, so we use the openai SDK
-as a unified client. This module also contains ``ResponseLogger``, the
-JSONL writer that records every prompt/response pair emitted by LLM
-metrics.
+vLLM and TogetherAI expose OpenAI-compatible APIs and use the openai
+SDK; Anthropic uses its native SDK (``anthropic.Anthropic``). This
+module also contains ``ResponseLogger``, the JSONL writer that records
+every prompt/response pair emitted by LLM metrics.
 """
 
 from __future__ import annotations
@@ -26,7 +26,13 @@ _PROVIDER_DEFAULTS = {
         "base_url": "https://api.together.xyz/v1",
         "api_key_env": "TOGETHER_API_KEY",
     },
+    "anthropic": {
+        "base_url": "https://api.anthropic.com",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
 }
+
+PROVIDERS = tuple(_PROVIDER_DEFAULTS)
 
 
 class LLMClient:
@@ -72,12 +78,20 @@ class LLMClient:
 
     def _get_client(self):
         if self._client is None:
-            from openai import OpenAI
+            if self.provider == "anthropic":
+                from anthropic import Anthropic
 
-            self._client = OpenAI(
-                base_url=self._base_url,
-                api_key=self._api_key,
-            )
+                self._client = Anthropic(
+                    api_key=self._api_key,
+                    base_url=self._base_url,
+                )
+            else:
+                from openai import OpenAI
+
+                self._client = OpenAI(
+                    base_url=self._base_url,
+                    api_key=self._api_key,
+                )
         return self._client
 
     def generate(
@@ -98,17 +112,32 @@ class LLMClient:
         Returns:
             The assistant's response text.
         """
+        client = self._get_client()
+        temp = temperature if temperature is not None else self.temperature
+        tokens = max_tokens or self.max_tokens
+
+        if self.provider == "anthropic":
+            kwargs = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temp,
+                "max_tokens": tokens,
+            }
+            if system_prompt:
+                kwargs["system"] = system_prompt
+            response = client.messages.create(**kwargs)
+            return response.content[0].text
+
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        client = self._get_client()
         response = client.chat.completions.create(
             model=self.model,
             messages=messages,
-            temperature=temperature if temperature is not None else self.temperature,
-            max_tokens=max_tokens or self.max_tokens,
+            temperature=temp,
+            max_tokens=tokens,
         )
         return response.choices[0].message.content
 
