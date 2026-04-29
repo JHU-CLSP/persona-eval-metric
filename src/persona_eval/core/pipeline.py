@@ -56,15 +56,51 @@ def score_pair_cached(
     return prefs
 
 
+_FLIP_PAIRWISE = {"A": "B", "B": "A", "tie": "tie"}
+
+
+def score_pair_both_orders(
+    metric, metric_name: str, cfg_hash: str,
+    summary_a: str, summary_b: str, source: str,
+    persona_kwargs: dict | None, cache: MetricCache | None,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Run a pair forwards and reversed; return ``(consensus, fwd, rev)``.
+
+    The reverse call's ``"A"``/``"B"`` output is flipped so it speaks the
+    same frame as the forward call (``"A"`` still means ``summary_a`` won).
+    The cache stores the raw position-frame results under their respective
+    ordered keys, so single-direction reads elsewhere stay correct.
+
+    The consensus verdict is conservative: when forward and reverse
+    disagree, the sub-metric degrades to ``"tie"``.
+    """
+    fwd = score_pair_cached(
+        metric, metric_name, cfg_hash, summary_a, summary_b, source, persona_kwargs, cache,
+    )
+    rev_raw = score_pair_cached(
+        metric, metric_name, cfg_hash, summary_b, summary_a, source, persona_kwargs, cache,
+    )
+    rev = {k: _FLIP_PAIRWISE.get(v, v) for k, v in rev_raw.items()}
+    consensus = {sm: fwd[sm] if fwd[sm] == rev[sm] else "tie" for sm in fwd}
+    return consensus, fwd, rev
+
+
 def run_pairwise_comparisons(
     tasks: list[dict], metric, text_key: str,
     metric_name: str | None = None, cache: MetricCache | None = None,
-) -> tuple[list[dict], list[dict]]:
+    measure_position_bias: bool = False,
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Run pairwise comparisons mirroring the human annotation tournament.
 
     Round 1: A vs B, C vs D. Final: round1 winners face off.
 
-    Returns ``(raw_preferences, tournament_scores)``.
+    When ``measure_position_bias`` is True, every pair is run in both
+    orders and the conservative consensus (ties on disagreement) drives
+    the tournament. Per-pair forward/reverse verdicts are recorded in
+    the third return value for downstream bias-rate analysis.
+
+    Returns ``(raw_preferences, tournament_scores, bias_rows)``. The
+    third list is empty when ``measure_position_bias`` is False.
     """
     mn = metric_name or getattr(metric, "name", type(metric).__name__)
     cfg_hash = config_hash(metric.cache_config())
@@ -75,6 +111,29 @@ def run_pairwise_comparisons(
 
     raw_prefs: list[dict] = []
     score_rows: list[dict] = []
+    bias_rows: list[dict] = []
+
+    def _run_pair(qi, comparison, left_label, right_label, left_summary, right_summary, src, pk):
+        """Score one pair, optionally in both orders, and emit bias rows."""
+        if measure_position_bias:
+            consensus, fwd, rev = score_pair_both_orders(
+                metric, mn, cfg_hash, left_summary, right_summary, src, pk, cache,
+            )
+            for sm in fwd:
+                bias_rows.append({
+                    "query_index": qi,
+                    "comparison": comparison,
+                    "left": left_label,
+                    "right": right_label,
+                    "sub_metric": sm,
+                    "forward_pref": fwd[sm],
+                    "reverse_pref": rev[sm],
+                    "consistent": fwd[sm] == rev[sm],
+                })
+            return consensus
+        return score_pair_cached(
+            metric, mn, cfg_hash, left_summary, right_summary, src, pk, cache,
+        )
 
     for qi, label_tasks in tqdm(by_query.items(), desc=metric.name):
         if not all(l in label_tasks for l in ("A", "B", "C", "D")):
@@ -86,10 +145,10 @@ def run_pairwise_comparisons(
         scores: dict[str, dict[str, float]] = {l: {} for l in ("A", "B", "C", "D")}
 
         # Round 1: A vs B
-        result_ab = score_pair_cached(
-            metric, mn, cfg_hash,
+        result_ab = _run_pair(
+            qi, "round1_ab", "A", "B",
             label_tasks["A"]["summary"], label_tasks["B"]["summary"],
-            source, pk, cache,
+            source, pk,
         )
         if sub_metrics is None:
             sub_metrics = list(result_ab.keys())
@@ -97,10 +156,10 @@ def run_pairwise_comparisons(
                 scores[l] = {sm: 0.0 for sm in sub_metrics}
 
         # Round 1: C vs D
-        result_cd = score_pair_cached(
-            metric, mn, cfg_hash,
+        result_cd = _run_pair(
+            qi, "round1_cd", "C", "D",
             label_tasks["C"]["summary"], label_tasks["D"]["summary"],
-            source, pk, cache,
+            source, pk,
         )
 
         ab_winners: dict[str, str] = {}
@@ -150,10 +209,10 @@ def run_pairwise_comparisons(
 
         pref_final_row = {"query_index": qi, "comparison": "final"}
         for (w_ab, w_cd), sms in final_pairs.items():
-            result_final = score_pair_cached(
-                metric, mn, cfg_hash,
+            result_final = _run_pair(
+                qi, "final", w_ab, w_cd,
                 label_tasks[w_ab]["summary"], label_tasks[w_cd]["summary"],
-                source, pk, cache,
+                source, pk,
             )
             for sm in sms:
                 pref_final = result_final[sm]
@@ -172,7 +231,7 @@ def run_pairwise_comparisons(
         for label in ("A", "B", "C", "D"):
             score_rows.append({"query_index": qi, "label": label, **scores[label]})
 
-    return raw_prefs, score_rows
+    return raw_prefs, score_rows, bias_rows
 
 
 def build_tasks(
@@ -279,11 +338,14 @@ def compute_metric_scores(
     cache: MetricCache | None = None,
     existing_df: pd.DataFrame | None = None,
     on_metric_done=None,
-) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    measure_position_bias: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]:
     """Compute metric scores for all (query, summary) pairs.
 
-    ``on_metric_done(scores_df, pairwise_prefs_df)`` fires after each
-    metric finishes so callers can persist output incrementally.
+    ``on_metric_done(scores_df, pairwise_prefs_df, position_bias_df)``
+    fires after each metric finishes so callers can persist output
+    incrementally. ``position_bias_df`` is ``None`` unless
+    ``measure_position_bias`` is True.
     """
     llm_kwargs = dict(llm_kwargs or {})
     include_query = llm_kwargs.pop("include_query", False)
@@ -309,6 +371,7 @@ def compute_metric_scores(
 
     all_dfs: list[pd.DataFrame] = []
     all_raw_prefs: list[dict] = []
+    all_bias_rows: list[dict] = []
 
     if existing_df is not None and not existing_df.empty:
         all_dfs.append(existing_df.copy())
@@ -328,11 +391,14 @@ def compute_metric_scores(
         rows: list[dict] = []
         if metric.is_pairwise:
             print(f"Computing {metric_name}...")
-            raw_prefs, score_rows = run_pairwise_comparisons(
+            raw_prefs, score_rows, bias_rows = run_pairwise_comparisons(
                 tasks, metric, text_key, metric_name=metric_name, cache=cache,
+                measure_position_bias=measure_position_bias,
             )
             all_raw_prefs.extend(raw_prefs)
             rows.extend(score_rows)
+            for br in bias_rows:
+                all_bias_rows.append({"metric_name": metric_name, **br})
         else:
             if not tasks:
                 continue
@@ -374,8 +440,10 @@ def compute_metric_scores(
         if on_metric_done is not None:
             partial_scores = merge_score_dfs(all_dfs)
             partial_prefs = pd.DataFrame(all_raw_prefs) if all_raw_prefs else None
-            on_metric_done(partial_scores, partial_prefs)
+            partial_bias = pd.DataFrame(all_bias_rows) if all_bias_rows else None
+            on_metric_done(partial_scores, partial_prefs, partial_bias)
 
     scores_df = merge_score_dfs(all_dfs)
     pairwise_prefs_df = pd.DataFrame(all_raw_prefs) if all_raw_prefs else None
-    return scores_df, pairwise_prefs_df
+    position_bias_df = pd.DataFrame(all_bias_rows) if all_bias_rows else None
+    return scores_df, pairwise_prefs_df, position_bias_df

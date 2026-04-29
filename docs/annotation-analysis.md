@@ -119,6 +119,7 @@ persona-eval compute-metrics annotations.zip \
 | `--llm-thinking-budget` | Enable Anthropic extended thinking with this token budget (≥ 1024 and strictly less than `max_tokens`). Anthropic provider only | off |
 | `--persona` | Enable persona-aware evaluation using annotator profiles | off |
 | `--include-query` | Include the annotator's query in LLM judge prompts | off |
+| `--measure-position-bias` | For pairwise LLM judges, run each pair in both orders and emit `<output>_position_bias.csv` | off |
 
 ### Caching options
 
@@ -129,6 +130,47 @@ persona-eval compute-metrics annotations.zip \
 | `--clear-metric-cache` | Delete all metric cache entries before running | off |
 
 See [Caching](#caching) below for how the cache works.
+
+### Measuring position bias of LLM judges
+
+Pairwise LLM judges are sensitive to which summary appears first in the
+prompt. Pass `--measure-position-bias` to score every pair in both
+orders — `(A, B)` and `(B, A)` — and emit a sibling
+`<output>_position_bias.csv` next to the metric scores. Columns:
+
+| Column | Meaning |
+|---|---|
+| `metric_name` | The metric being measured |
+| `query_index`, `comparison` | Which tournament pair (`round1_ab`, `round1_cd`, `final`) |
+| `left`, `right` | The human labels (A/B/C/D) of the pair's two summaries |
+| `sub_metric` | Per-dimension key for multi-dimensional judges (e.g., `llm_judge_rel_relevance`) |
+| `forward_pref` | Verdict when `left` was shown first (`"A"`, `"B"`, or `"tie"` — in the **forward frame**, so `"A"` means `left` won) |
+| `reverse_pref` | Verdict when `right` was shown first, **flipped back into the forward frame** so it is comparable to `forward_pref` |
+| `consistent` | `True` when forward and reverse agree |
+
+When forward and reverse disagree, the tournament uses a conservative
+consensus — that sub-metric scores the pair as `"tie"`. Agreement
+metrics computed downstream consume the consensus verdicts (in human
+label space), so existing pairwise-agreement numbers stay
+interpretable; biased judges just produce more ties.
+
+A minimal analysis pass:
+
+```python
+import pandas as pd
+bias = pd.read_csv("results/run_<id>/metric_scores_position_bias.csv")
+for (metric, sub), grp in bias.groupby(["metric_name", "sub_metric"]):
+    rate = (~grp["consistent"]).mean()
+    flips = grp[~grp["consistent"]]
+    first_wins = ((flips["forward_pref"] == "A") & (flips["reverse_pref"] == "B")).sum()
+    second_wins = ((flips["forward_pref"] == "B") & (flips["reverse_pref"] == "A")).sum()
+    print(f"{metric}/{sub}: bias_rate={rate:.1%}  first-pos={first_wins}/{len(flips)}  second-pos={second_wins}/{len(flips)}")
+```
+
+**Cost:** the first run roughly doubles LLM calls for pairwise metrics.
+The metric cache is keyed on the ordered tuple `(summary_a, summary_b)`,
+so reverse-direction results are cached alongside forward results and
+reused on subsequent runs.
 
 ### Evaluation dimensions
 
