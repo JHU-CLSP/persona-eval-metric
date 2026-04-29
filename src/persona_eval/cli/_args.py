@@ -56,6 +56,17 @@ def add_llm_args(parser):
         help="Path to custom prompt template for llm_judge metric",
     )
     group.add_argument(
+        "--llm-temperature", type=float, default=1.0,
+        help="Sampling temperature (default: 1.0). Must be 1.0 if "
+             "--llm-thinking-budget is set.",
+    )
+    group.add_argument(
+        "--llm-thinking-budget", type=int, default=None,
+        help="Enable Anthropic extended thinking with this token budget "
+             "(>=1024, < max_tokens). Anthropic provider only; requires "
+             "--llm-temperature 1.0. Default: thinking off.",
+    )
+    group.add_argument(
         "--persona", action="store_true",
         help="Enable persona-aware evaluation using annotator profiles",
     )

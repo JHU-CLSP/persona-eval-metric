@@ -49,8 +49,9 @@ class LLMClient:
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
-        temperature: float = 0.0,
+        temperature: float = 1.0,
         max_tokens: int = 1024,
+        thinking_budget: int | None = None,
     ):
         if provider not in _PROVIDER_DEFAULTS:
             raise ValueError(
@@ -59,10 +60,32 @@ class LLMClient:
         if model is None:
             raise ValueError("model is required for LLM-based metrics")
 
+        if thinking_budget is not None:
+            if provider != "anthropic":
+                raise ValueError(
+                    f"thinking_budget is only supported for the 'anthropic' provider, "
+                    f"got '{provider}'"
+                )
+            if temperature != 1.0:
+                raise ValueError(
+                    f"Anthropic extended thinking requires temperature=1.0, "
+                    f"got temperature={temperature}"
+                )
+            if thinking_budget < 1024:
+                raise ValueError(
+                    f"thinking_budget must be >= 1024, got {thinking_budget}"
+                )
+            if thinking_budget >= max_tokens:
+                raise ValueError(
+                    f"thinking_budget ({thinking_budget}) must be strictly less than "
+                    f"max_tokens ({max_tokens})"
+                )
+
         self.provider = provider
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.thinking_budget = thinking_budget
 
         defaults = _PROVIDER_DEFAULTS[provider]
         self._base_url = base_url or defaults["base_url"]
@@ -121,6 +144,12 @@ class LLMClient:
         temp = temperature if temperature is not None else self.temperature
         tokens = max_tokens or self.max_tokens
 
+        if self.thinking_budget is not None and temp != 1.0:
+            raise ValueError(
+                f"Anthropic extended thinking requires temperature=1.0, "
+                f"got temperature={temp}"
+            )
+
         if self.provider == "anthropic":
             kwargs = {
                 "model": self.model,
@@ -130,8 +159,21 @@ class LLMClient:
             }
             if system_prompt:
                 kwargs["system"] = system_prompt
+            if self.thinking_budget is not None:
+                if self.thinking_budget >= tokens:
+                    raise ValueError(
+                        f"thinking_budget ({self.thinking_budget}) must be strictly "
+                        f"less than max_tokens ({tokens})"
+                    )
+                kwargs["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": self.thinking_budget,
+                }
             response = client.messages.create(**kwargs)
-            return response.content[0].text
+            for block in response.content:
+                if getattr(block, "type", None) == "text":
+                    return block.text
+            raise ValueError("Anthropic response contained no text block")
 
         messages = []
         if system_prompt:
