@@ -6,11 +6,8 @@ An instruction (might include an Input inside it), a response A to evaluate, a r
 4. Please do not generate any other opening, closing, or explanations.
 
 ###Instruction:
-Compare the quality of the following two summaries of a source document on the dimension of {dimension}.
+Compare the quality of the following two summaries on the dimension of {dimension}.
 {query_section}
-Source Document:
-{source}
-
 ###Response A:
 {summary_a}
 

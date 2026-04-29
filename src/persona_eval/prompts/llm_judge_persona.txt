@@ -13,10 +13,7 @@ Annotator profile:
 - Domain: {domain}
 - Information needs: {info_needs}
 {query_section}
-Evaluate the quality of the following summary of a source document on the dimension of {dimension}, from this person's perspective.
-
-Source Document:
-{source}
+Evaluate the quality of the following summary on the dimension of {dimension}, from this person's perspective.
 
 Summary:
 {summary}

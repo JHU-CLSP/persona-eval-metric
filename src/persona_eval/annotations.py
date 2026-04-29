@@ -69,7 +69,12 @@ def load_annotations(
         raise ValueError(f"Path must be a .zip file or directory: {path}")
 
     profiles = _load_profiles(root)
-    entries = _load_entries(root)
+    entries, pre_task_by_id = _load_entries(root)
+    for profile in profiles:
+        answers = pre_task_by_id.get(profile.annotator_id, {})
+        profile.role = answers.get("role", "")
+        profile.domain = answers.get("domain", "")
+        profile.info_needs = answers.get("info_needs", "")
     return profiles, entries
 
 
@@ -102,18 +107,21 @@ def _load_profiles(root: Path) -> list[AnnotatorProfile]:
     return profiles
 
 
-def _load_entries(root: Path) -> list[AnnotationEntry]:
+def _load_entries(
+    root: Path,
+) -> tuple[list[AnnotationEntry], dict[str, dict]]:
     results_dir = root / "results"
     if not results_dir.exists():
         raise FileNotFoundError(f"No results/ directory found in {root}")
 
     entries = []
+    pre_task_by_id: dict[str, dict] = {}
     for json_file in sorted(results_dir.glob("*.json")):
         with open(json_file) as f:
             data = json.load(f)
 
         annotator_id = data.get("token", json_file.stem)
-        pre_task = data.get("pre_task_answers", {})
+        pre_task_by_id[annotator_id] = data.get("pre_task_answers", {}) or {}
 
         for ann in data.get("annotations", []):
             if not ann.get("summaries"):
@@ -134,7 +142,7 @@ def _load_entries(root: Path) -> list[AnnotationEntry]:
                 )
             )
 
-    return entries
+    return entries, pre_task_by_id
 
 
 def get_pairwise_preferences(
