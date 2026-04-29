@@ -11,3 +11,4 @@ from persona_eval.metrics import llm_judge_relative_metric  # noqa: F401
 from persona_eval.metrics import llm_judge_annotator_metric  # noqa: F401
 from persona_eval.metrics import persona_recall_metric  # noqa: F401
 from persona_eval.metrics import persona_precision_metric  # noqa: F401
+from persona_eval.metrics import length_metric  # noqa: F401
