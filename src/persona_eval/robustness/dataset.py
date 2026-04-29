@@ -118,7 +118,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "abstract",
         "reference_col": None,
         "description": "Arxiv scientific paper summarization",
-        "intended_audience": "researcher in the field",
+        "intended_audience": "expert researcher",
         "available": True,
     },
     "pubmed": {
@@ -129,7 +129,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "abstract",
         "reference_col": None,
         "description": "PubMed biomedical paper summarization",
-        "intended_audience": "biomedical researcher",
+        "intended_audience": "expert researcher",
         "available": True,
     },
     "scitldr": {
@@ -140,7 +140,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "target",
         "reference_col": None,
         "description": "SciTLDR scientific paper TLDRs",
-        "intended_audience": "researcher in the field",
+        "intended_audience": "expert researcher",
         "available": True,
     },
     "elife": {
@@ -173,7 +173,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "summary",
         "reference_col": None,
         "description": "Multi-perspective scientific paper summarization (no test split)",
-        "intended_audience": "researcher in the field",
+        "intended_audience": "expert researcher",
         "available": True,
     },
     "cdsr": {
@@ -184,7 +184,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "Cochrane Database of Systematic Reviews",
-        "intended_audience": "clinician",
+        "intended_audience": "non-expert layperson",
         "available": False,
     },
     "eureka": {
@@ -206,7 +206,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "CELLS scientific summarization",
-        "intended_audience": "researcher in the field",
+        "intended_audience": "non-expert layperson",
         "available": False,
     },
     "scinews": {
@@ -217,7 +217,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "News_Body",
         "reference_col": "News_Title",
         "description": "SciNews scientific news report generation (dongqi-me/SciNews)",
-        "intended_audience": "general news reader",
+        "intended_audience": "journalist",
         "available": True,
     },
     "longsumm": {
@@ -228,7 +228,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "Long scientific document summarization",
-        "intended_audience": "researcher in the field",
+        "intended_audience": "expert researcher",
         "available": False,
     },
 }
