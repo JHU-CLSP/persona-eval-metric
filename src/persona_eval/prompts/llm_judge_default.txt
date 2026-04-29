@@ -6,11 +6,8 @@ An instruction (might include an Input inside it), a response to evaluate, and a
 4. Please do not generate any other opening, closing, or explanations.
 
 ###Instruction:
-Evaluate the quality of the following summary of a source document on the dimension of {dimension}.
+Evaluate the quality of the following summary on the dimension of {dimension}.
 {query_section}
-Source Document:
-{source}
-
 Summary:
 {summary}
 

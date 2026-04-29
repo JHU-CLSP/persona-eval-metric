@@ -19,9 +19,6 @@ This study explores what individual readers actually want from summaries of scie
 ###Query:
 {query}
 
-###Source Document:
-{source}
-
 ###Response A:
 {summary_a}
 
