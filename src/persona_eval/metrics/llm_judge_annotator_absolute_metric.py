@@ -2,9 +2,7 @@
 
 Uses the same annotator instructions as ``llm_judge_annotator`` (role,
 domain, information needs, query) but grades each summary independently
-on a 1-5 Likert scale rather than comparing two summaries directly.
-A pair verdict (A/B/tie) is derived from the two absolute scores:
-ties occur when the judge gives both summaries the same score.
+on a 1-5 Likert scale (one LLM call per summary).
 
 Supports local vLLM and TogetherAI backends via the shared LLM client.
 """
@@ -32,9 +30,9 @@ _DEFAULT_RUBRIC_PATH = RUBRICS_DIR / "annotator_query.txt"
 class LLMJudgeAnnotatorAbsoluteMetric(BaseLLMMetric):
     """Annotator-perspective absolute grading on a 1-5 Likert scale.
 
-    Scores each summary independently with one LLM call, returning an
-    integer 1-5. For pairwise tournaments, the two scores are compared:
-    higher score wins, equal scores produce ``"tie"``.
+    One LLM call per summary returns an integer 1-5 score reflecting how
+    well the summary addresses the annotator's query, given their role,
+    domain, and information needs.
     """
 
     def __init__(
@@ -70,7 +68,7 @@ class LLMJudgeAnnotatorAbsoluteMetric(BaseLLMMetric):
 
     @property
     def is_pairwise(self) -> bool:
-        return True
+        return False
 
     @property
     def needs_persona(self) -> bool:
@@ -80,18 +78,20 @@ class LLMJudgeAnnotatorAbsoluteMetric(BaseLLMMetric):
     def needs_query(self) -> bool:
         return True
 
-    def score(self, summary: str, source: str, **kwargs) -> dict[str, float]:
-        raise NotImplementedError(
-            "llm_judge_annotator_absolute is run pairwise. "
-            "Use score_pair() or let the pipeline drive the tournament."
-        )
+    def score(
+        self,
+        summary: str,
+        source: str,
+        persona_kwargs: dict | None = None,
+    ) -> dict[str, float]:
+        """Grade ``summary`` on a 1-5 Likert scale from the annotator's perspective.
 
-    def _score_one(self, summary: str, persona_kwargs: dict) -> int | None:
-        """Run one LLM call to grade ``summary`` on the 1-5 rubric.
-
-        Returns the parsed integer score, or ``None`` if parsing fails.
+        Returns ``{"llm_judge_annotator_absolute": <float>}``. The value
+        is ``NaN`` if the LLM call fails or the response cannot be parsed.
         """
+        self._load()
         pk = persona_kwargs or {}
+
         rubric = self._rubric.format(
             role=pk.get("role", "unspecified"),
             domain=pk.get("domain", "unspecified"),
@@ -107,54 +107,25 @@ class LLMJudgeAnnotatorAbsoluteMetric(BaseLLMMetric):
             rubric=rubric,
         )
 
-        response_text = self._client.generate(prompt)
+        try:
+            response_text = self._client.generate(prompt)
+        except Exception:
+            logger.warning("LLM judge annotator absolute call failed, returning NaN")
+            return {"llm_judge_annotator_absolute": float("nan")}
+
         match = SCORE_RE.search(response_text)
-        score = int(match.group(1)) if match else None
+        parsed = int(match.group(1)) if match else None
 
         self._log_response(
             metric="llm_judge_annotator_absolute",
             prompt=prompt,
             response=response_text,
-            parsed_result=score,
+            parsed_result=parsed,
             query=pk.get("query", ""),
         )
-        return score
 
-    def score_pair(
-        self,
-        summary_a: str,
-        summary_b: str,
-        source: str,
-        persona_kwargs: dict | None = None,
-    ) -> dict[str, str]:
-        """Grade each summary on 1-5 and return a pair verdict.
+        if parsed is None:
+            logger.warning("LLM judge annotator absolute: no [RESULT] tag found")
+            return {"llm_judge_annotator_absolute": float("nan")}
 
-        Returns ``"A"`` if summary_a's score is higher, ``"B"`` if
-        summary_b's score is higher, ``"tie"`` when the scores are equal
-        or either call fails to parse a score.
-        """
-        self._load()
-        pk = persona_kwargs or {}
-
-        try:
-            score_a = self._score_one(summary_a, pk)
-        except Exception:
-            logger.warning("LLM judge annotator absolute call failed for A, marking tie")
-            score_a = None
-
-        try:
-            score_b = self._score_one(summary_b, pk)
-        except Exception:
-            logger.warning("LLM judge annotator absolute call failed for B, marking tie")
-            score_b = None
-
-        if score_a is None or score_b is None:
-            return {"llm_judge_annotator_absolute": "tie"}
-
-        if score_a > score_b:
-            verdict = "A"
-        elif score_b > score_a:
-            verdict = "B"
-        else:
-            verdict = "tie"
-        return {"llm_judge_annotator_absolute": verdict}
+        return {"llm_judge_annotator_absolute": float(parsed)}
