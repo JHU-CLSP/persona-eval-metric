@@ -118,6 +118,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "abstract",
         "reference_col": None,
         "description": "Arxiv scientific paper summarization",
+        "intended_audience": "researcher in the field",
         "available": True,
     },
     "pubmed": {
@@ -128,6 +129,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "abstract",
         "reference_col": None,
         "description": "PubMed biomedical paper summarization",
+        "intended_audience": "biomedical researcher",
         "available": True,
     },
     "scitldr": {
@@ -138,6 +140,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "target",
         "reference_col": None,
         "description": "SciTLDR scientific paper TLDRs",
+        "intended_audience": "researcher in the field",
         "available": True,
     },
     "elife": {
@@ -148,6 +151,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "summary",
         "reference_col": "title",
         "description": "eLife journal lay summaries",
+        "intended_audience": "non-expert layperson",
         "available": True,
     },
     "plos": {
@@ -158,6 +162,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "summary",
         "reference_col": "title",
         "description": "PLOS journal lay summaries",
+        "intended_audience": "non-expert layperson",
         "available": True,
     },
     "mup": {
@@ -168,6 +173,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "summary",
         "reference_col": None,
         "description": "Multi-perspective scientific paper summarization (no test split)",
+        "intended_audience": "researcher in the field",
         "available": True,
     },
     "cdsr": {
@@ -178,6 +184,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "Cochrane Database of Systematic Reviews",
+        "intended_audience": "clinician",
         "available": False,
     },
     "eureka": {
@@ -188,6 +195,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "EurekAlert scientific press release summarization",
+        "intended_audience": "journalist",
         "available": False,
     },
     "cells": {
@@ -198,6 +206,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "CELLS scientific summarization",
+        "intended_audience": "researcher in the field",
         "available": False,
     },
     "scinews": {
@@ -208,6 +217,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": "News_Body",
         "reference_col": "News_Title",
         "description": "SciNews scientific news report generation (dongqi-me/SciNews)",
+        "intended_audience": "general news reader",
         "available": True,
     },
     "longsumm": {
@@ -218,6 +228,7 @@ DATASET_REGISTRY: dict[str, dict] = {
         "summary_col": None,
         "reference_col": None,
         "description": "Long scientific document summarization",
+        "intended_audience": "researcher in the field",
         "available": False,
     },
 }
@@ -303,7 +314,7 @@ def load_from_huggingface(
                 sample_id=f"{name_lower}_{split}_{idx}",
                 source=source,
                 summary=summary,
-                audience="general reader",
+                audience=cfg.get("intended_audience") or "general reader",
                 reference=reference,
                 metadata={
                     "dataset": name_lower,

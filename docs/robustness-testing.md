@@ -274,6 +274,7 @@ DATASET_REGISTRY["my_dataset"] = {
     "summary_col": "summary",
     "reference_col": "title",     # or None
     "description": "My dataset description",
+    "intended_audience": "researcher in the field",  # populates SummarizationSample.audience
     "available": True,
 }
 ```
