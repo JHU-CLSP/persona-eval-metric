@@ -1,0 +1,14 @@
+How well does the summary address the annotator's specific query, given their background and information needs?
+
+Annotator profile:
+- Role: {role}
+- Domain: {domain}
+- Information needs: {info_needs}
+
+Query: {query}
+
+[1] The summary does not address the annotator's query at all. It provides no information that would help answer what they asked about.
+[2] The summary barely addresses the query, touching on it only tangentially or providing very little of the requested information.
+[3] The summary partially addresses the query, providing some relevant information but missing important aspects of what was asked.
+[4] The summary addresses the query well, covering most of what was asked with only minor gaps.
+[5] The summary fully and directly addresses the annotator's query, providing the requested information clearly and completely.
