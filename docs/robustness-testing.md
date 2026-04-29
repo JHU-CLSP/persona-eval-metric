@@ -70,6 +70,8 @@ persona-eval robustness --dataset elife \
 | `--llm-model` | Model name or path | -- |
 | `--llm-base-url` | Override API base URL | `http://localhost:8000/v1` (vllm) |
 | `--llm-api-key` | API key (or set `TOGETHER_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env var) | -- |
+| `--llm-temperature` | Sampling temperature for the metric LLM. Must be `1.0` when `--llm-thinking-budget` is set | `1.0` |
+| `--llm-thinking-budget` | Enable Anthropic extended thinking with this token budget (≥ 1024 and strictly less than `max_tokens`). Anthropic provider only | off |
 | `--perturb-provider` | LLM provider for perturbation generation (overrides `--llm-provider`) | same as `--llm-provider` |
 | `--perturb-model` | Model for perturbation generation (overrides `--llm-model`) | same as `--llm-model` |
 | `--perturb-base-url` | Base URL for perturbation LLM (overrides `--llm-base-url`) | same as `--llm-base-url` |

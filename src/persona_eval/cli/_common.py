@@ -83,7 +83,8 @@ def save_run_params(path: Path, args) -> None:
 def collect_llm_kwargs(args) -> dict:
     """Collect LLM-related kwargs from CLI args."""
     kwargs = {}
-    for key in ("provider", "model", "api_key", "base_url", "prompt_file"):
+    for key in ("provider", "model", "api_key", "base_url", "prompt_file",
+                "temperature", "thinking_budget"):
         val = getattr(args, f"llm_{key}", None)
         if val is not None:
             kwargs[key] = val
@@ -349,7 +350,8 @@ def build_perturbation_tests(args, samples, test_names):
 def metric_kwargs_from_args(args) -> dict:
     """Build per-metric constructor kwargs from CLI args (used by robustness flows)."""
     kwargs = {}
-    for key in ("provider", "model", "api_key", "base_url"):
+    for key in ("provider", "model", "api_key", "base_url",
+                "temperature", "thinking_budget"):
         val = getattr(args, f"llm_{key}", None)
         if val is not None:
             kwargs[key] = val

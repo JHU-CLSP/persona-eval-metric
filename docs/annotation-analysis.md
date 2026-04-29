@@ -115,6 +115,8 @@ persona-eval compute-metrics annotations.zip \
 | `--llm-api-key` | API key (or use `TOGETHER_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env var) | `EMPTY` for vLLM |
 | `--llm-base-url` | Override API base URL | `localhost:8000/v1` (vLLM) |
 | `--llm-prompt-file` | Custom prompt template for `llm_judge` | built-in default |
+| `--llm-temperature` | Sampling temperature. Must be `1.0` when `--llm-thinking-budget` is set | `1.0` |
+| `--llm-thinking-budget` | Enable Anthropic extended thinking with this token budget (≥ 1024 and strictly less than `max_tokens`). Anthropic provider only | off |
 | `--persona` | Enable persona-aware evaluation using annotator profiles | off |
 | `--include-query` | Include the annotator's query in LLM judge prompts | off |
 
@@ -323,7 +325,7 @@ persona-eval compute-metrics annotations.zip --metrics llm_judge \
     --llm-model my-model --clear-metric-cache
 ```
 
-**What invalidates a cache entry?** Anything in `cache_config()`: changing the LLM model, flipping `--persona`, or pointing to a different `--llm-prompt-file` all produce new cache keys, leaving old entries untouched.
+**What invalidates a cache entry?** Anything in `cache_config()`: changing the LLM model, `--llm-temperature`, `--llm-thinking-budget`, flipping `--persona`, or pointing to a different `--llm-prompt-file` all produce new cache keys, leaving old entries untouched.
 
 **Caveat:** `cache_config()` records the prompt-file *path*, not its contents. If you edit a prompt template in place, the cache key doesn't change and you'll get stale results. Run with `--clear-metric-cache` (or delete the relevant files under `{cache-dir}/metrics/`) after editing a prompt.
 

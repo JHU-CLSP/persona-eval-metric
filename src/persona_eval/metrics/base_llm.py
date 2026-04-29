@@ -81,6 +81,8 @@ class BaseLLMMetric(BaseMetric):
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
+        temperature: float = 1.0,
+        thinking_budget: int | None = None,
         response_logger=None,
         **kwargs,
     ):
@@ -88,6 +90,8 @@ class BaseLLMMetric(BaseMetric):
         self._model = model
         self._api_key = api_key
         self._base_url = base_url
+        self._temperature = temperature
+        self._thinking_budget = thinking_budget
         self._response_logger = response_logger
         self._client = None
 
@@ -101,6 +105,8 @@ class BaseLLMMetric(BaseMetric):
                 model=self._model,
                 api_key=self._api_key,
                 base_url=self._base_url,
+                temperature=self._temperature,
+                thinking_budget=self._thinking_budget,
             )
 
     def _log_response(
@@ -126,6 +132,8 @@ class BaseLLMMetric(BaseMetric):
             **super().cache_config(),
             "provider": self._provider,
             "model": self._model,
+            "temperature": self._temperature,
+            "thinking_budget": self._thinking_budget,
         }
 
 
