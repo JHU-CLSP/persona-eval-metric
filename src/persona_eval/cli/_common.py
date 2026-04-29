@@ -114,7 +114,8 @@ def compute_and_save(
 ):
     """Compute metrics and save results incrementally.
 
-    Returns ``(scores_df, pairwise_prefs_df)``.
+    Returns ``(scores_df, pairwise_prefs_df, position_bias_df)``. The
+    third element is ``None`` unless ``--measure-position-bias`` is set.
     """
     llm_kwargs = collect_llm_kwargs(args)
     response_logger = create_response_logger(output_path)
@@ -122,20 +123,24 @@ def compute_and_save(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     prefs_path = output.parent / (output.stem + "_pairwise_prefs.csv")
+    bias_path = output.parent / (output.stem + "_position_bias.csv")
 
     existing_df = pd.read_csv(output) if output.exists() else None
     if existing_df is not None:
         print(f"Found existing {output} ({len(existing_df)} rows); will skip already-computed metrics")
 
     cache = build_metric_cache(args)
+    measure_position_bias = getattr(args, "measure_position_bias", False)
 
-    def save_partial(scores_df, prefs_df):
+    def save_partial(scores_df, prefs_df, bias_df=None):
         if scores_df is not None and not scores_df.empty:
             scores_df.to_csv(output, index=False)
         if prefs_df is not None:
             prefs_df.to_csv(prefs_path, index=False)
+        if bias_df is not None and not bias_df.empty:
+            bias_df.to_csv(bias_path, index=False)
 
-    scores_df, pairwise_prefs_df = compute_metric_scores(
+    scores_df, pairwise_prefs_df, position_bias_df = compute_metric_scores(
         entries, source_texts, reference_texts,
         metric_names, device=args.device,
         llm_kwargs=llm_kwargs, profiles_by_id=profiles_by_id,
@@ -143,6 +148,7 @@ def compute_and_save(
         cache=cache,
         existing_df=existing_df,
         on_metric_done=save_partial,
+        measure_position_bias=measure_position_bias,
     )
 
     if not scores_df.empty:
@@ -153,11 +159,15 @@ def compute_and_save(
         pairwise_prefs_df.to_csv(prefs_path, index=False)
         print(f"Saved raw pairwise preferences to {prefs_path}")
 
+    if position_bias_df is not None and not position_bias_df.empty:
+        position_bias_df.to_csv(bias_path, index=False)
+        print(f"Saved position-bias measurements to {bias_path}")
+
     if response_logger is not None:
         print(f"Saved LLM responses to {response_logger.path}")
         response_logger.close()
 
-    return scores_df, pairwise_prefs_df
+    return scores_df, pairwise_prefs_df, position_bias_df
 
 
 def run_correlations(entries, scores_df, pairwise_prefs_df, args, output_dir):

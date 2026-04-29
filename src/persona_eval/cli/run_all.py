@@ -39,7 +39,7 @@ def run(args):
     print(f"Fetched texts for {len(source_texts)} unique queries")
 
     metric_names = resolve_metrics(args.metrics)
-    scores_df, pairwise_prefs_df = compute_and_save(
+    scores_df, pairwise_prefs_df, _ = compute_and_save(
         entries, source_texts, reference_texts, profiles_by_id,
         metric_names, args, output_dir / "metric_scores.csv",
     )

@@ -28,6 +28,15 @@ def add_metric_args(parser):
         "--clear-metric-cache", action="store_true",
         help="Delete all entries from the metric cache before running.",
     )
+    parser.add_argument(
+        "--measure-position-bias", action="store_true",
+        help="For pairwise LLM judges, run each pair in both orders "
+             "(A,B) and (B,A) and emit a `<output>_position_bias.csv` "
+             "with per-pair forward/reverse verdicts. The tournament "
+             "uses the conservative consensus (ties on disagreement). "
+             "Doubles LLM cost on first run; reverse-direction results "
+             "are then cached.",
+    )
 
 
 def add_llm_args(parser):
