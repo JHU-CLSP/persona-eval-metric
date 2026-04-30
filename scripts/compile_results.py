@@ -19,10 +19,16 @@ run's config plus per-CSV identity columns:
                                          annotator_id, metric (when present)
 * robustness_scores.csv ................ sample_id, test_name, level, metric
 * robustness_analysis.csv .............. test_name, metric
+* perturbation_samples.csv (NEW) ....... sample_id   (from <run>/perturbations/samples.jsonl)
+* perturbations.csv (NEW) .............. sample_id, test_name, level   (from
+                                         <run>/perturbations/perturbations.jsonl,
+                                         flattened so each level is one row)
 
 Wide tables with multiple metric columns are melted to long format so each
-row has a single ``metric`` + ``score`` pair. Outputs are written under
-``--output-dir`` (default ``compiled_results/``) using the source filename.
+row has a single ``metric`` + ``score`` pair. Dict-valued metadata fields
+in the perturbation JSONL files are JSON-encoded into a string column so
+they round-trip through CSV. Outputs are written under ``--output-dir``
+(default ``compiled_results/``) using the source filename.
 
 Usage:
     python scripts/compile_results.py
@@ -255,6 +261,99 @@ def _write(df: pd.DataFrame | None, out_path: Path, label: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Perturbation JSONL compilation
+# ---------------------------------------------------------------------------
+#
+# robustness-generate writes <run>/perturbations/{samples,perturbations}.jsonl.
+# We compile both into long-format CSVs alongside the metric outputs, with the
+# same run-tagging + dedup model: most recent run wins for any
+# (config, sample_id) or (config, sample_id, test_name, level) collision.
+
+def _read_jsonl(path: Path) -> list[dict] | None:
+    if not path.exists():
+        return None
+    rows: list[dict] = []
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rows.append(json.loads(line))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"  Warning: could not read {path}: {e}")
+        return None
+    return rows
+
+
+def _flatten_metadata(row: dict, key: str = "metadata") -> dict:
+    """Replace a dict-valued field with a JSON string so it round-trips through CSV."""
+    out = dict(row)
+    val = out.get(key)
+    if isinstance(val, (dict, list)):
+        out[key] = json.dumps(val, ensure_ascii=False)
+    return out
+
+
+def _compile_perturbations_jsonl(runs: list[Run]) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """Compile samples.jsonl and perturbations.jsonl across runs.
+
+    Returns ``(samples_df, perturbations_df)`` — each may be ``None`` if no
+    run carried that file. Dedup keys: samples = (config, sample_id);
+    perturbations = (config, sample_id, test_name, level).
+    """
+    sample_frames: list[pd.DataFrame] = []
+    perturb_frames: list[pd.DataFrame] = []
+
+    for run in runs:
+        pdir = run.path / "perturbations"
+        if not pdir.is_dir():
+            continue
+
+        samples = _read_jsonl(pdir / "samples.jsonl")
+        if samples:
+            df = pd.DataFrame([_flatten_metadata(s) for s in samples])
+            sample_frames.append(_attach_run(df, run))
+
+        perturbs = _read_jsonl(pdir / "perturbations.jsonl")
+        if perturbs:
+            flat: list[dict] = []
+            for p in perturbs:
+                sid = p.get("sample_id")
+                tn = p.get("test_name")
+                for lv in p.get("levels", []):
+                    flat.append(_flatten_metadata({
+                        "sample_id": sid,
+                        "test_name": tn,
+                        "level": lv.get("level"),
+                        "level_label": lv.get("label"),
+                        "text": lv.get("text"),
+                        "metadata": lv.get("metadata"),
+                    }))
+            if flat:
+                df = pd.DataFrame(flat)
+                perturb_frames.append(_attach_run(df, run))
+
+    samples_df = _dedup_by_keys(sample_frames, ["sample_id"]) if sample_frames else None
+    perturbations_df = _dedup_by_keys(
+        perturb_frames, ["sample_id", "test_name", "level"]
+    ) if perturb_frames else None
+    return samples_df, perturbations_df
+
+
+def _dedup_by_keys(frames: list[pd.DataFrame], extra_keys: list[str]) -> pd.DataFrame:
+    """Concat + dedup helper — same logic as ``_compile_spec`` but for already-attached frames."""
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    full_keys = list(CONFIG_FIELDS) + [k for k in extra_keys if k in combined.columns]
+    sentinel = "\x00__NA__\x00"
+    keyed = combined.assign(**{k: combined[k].fillna(sentinel) for k in full_keys
+                               if combined[k].dtype == object or combined[k].isna().any()})
+    keyed = keyed.sort_values("run_id", kind="mergesort")
+    deduped_idx = keyed.drop_duplicates(subset=full_keys, keep="last").index
+    return combined.loc[sorted(deduped_idx)].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -303,6 +402,10 @@ def main():
         for filename, (id_cols, dedup_keys) in ROBUSTNESS_SPECS.items():
             df = _compile_spec(rob_runs, filename, id_cols, dedup_keys)
             _write(df, output_dir / filename, filename)
+
+        samples_df, perturbations_df = _compile_perturbations_jsonl(rob_runs)
+        _write(samples_df, output_dir / "perturbation_samples.csv", "perturbation_samples.csv")
+        _write(perturbations_df, output_dir / "perturbations.csv", "perturbations.csv")
 
     print(f"\nDone. Compiled outputs in {output_dir}/")
 
