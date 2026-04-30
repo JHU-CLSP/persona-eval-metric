@@ -19,16 +19,24 @@ run's config plus per-CSV identity columns:
                                          annotator_id, metric (when present)
 * robustness_scores.csv ................ sample_id, test_name, level, metric
 * robustness_analysis.csv .............. test_name, metric
-* perturbation_samples.csv (NEW) ....... sample_id   (from <run>/perturbations/samples.jsonl)
-* perturbations.csv (NEW) .............. sample_id, test_name, level   (from
+* perturbation_samples.csv ............. sample_id   (from <run>/perturbations/samples.jsonl)
+* perturbations.csv .................... sample_id, test_name, level   (from
                                          <run>/perturbations/perturbations.jsonl,
-                                         flattened so each level is one row)
+                                         flattened so each level is one row;
+                                         joined with the sample's untouched
+                                         ``summary`` and ``source`` so each row
+                                         shows original vs. perturbed text)
 
 Wide tables with multiple metric columns are melted to long format so each
 row has a single ``metric`` + ``score`` pair. Dict-valued metadata fields
 in the perturbation JSONL files are JSON-encoded into a string column so
 they round-trip through CSV. Outputs are written under ``--output-dir``
 (default ``compiled_results/``) using the source filename.
+
+In addition, ``samples.jsonl`` and ``perturbations.jsonl`` are written
+alongside the CSVs in the format that ``persona-eval robustness-eval
+--perturbations-dir <output_dir>`` reads, so the compiled directory can
+be fed straight back into the pipeline.
 
 Usage:
     python scripts/compile_results.py
@@ -392,6 +400,134 @@ def _compile_perturbations_jsonl(runs: list[Run]) -> tuple[pd.DataFrame | None, 
     return samples_df, perturbations_df
 
 
+def _augment_perturbations_with_originals(
+    perturbations_df: pd.DataFrame | None,
+    samples_df: pd.DataFrame | None,
+) -> pd.DataFrame | None:
+    """Add ``original_summary`` and ``source`` columns to the perturbations CSV.
+
+    Each perturbation row already carries the perturbed text in ``text``;
+    this merges in the corresponding sample's untouched summary and source
+    document so the same row shows the before-and-after view. Joins on
+    ``CONFIG_FIELDS + sample_id`` so samples from different configs don't
+    cross-contaminate.
+    """
+    if perturbations_df is None or perturbations_df.empty:
+        return perturbations_df
+    if samples_df is None or samples_df.empty:
+        return perturbations_df
+
+    join_keys = list(CONFIG_FIELDS) + ["sample_id"]
+    join_keys = [k for k in join_keys if k in perturbations_df.columns and k in samples_df.columns]
+
+    take = ["summary", "source"]
+    take = [c for c in take if c in samples_df.columns]
+    if not take:
+        return perturbations_df
+
+    right = samples_df[join_keys + take].rename(columns={"summary": "original_summary"})
+    merged = perturbations_df.merge(right, on=join_keys, how="left")
+    # Reorder so original_summary sits next to the perturbed text.
+    if "text" in merged.columns and "original_summary" in merged.columns:
+        cols = list(merged.columns)
+        cols.remove("original_summary")
+        if "source" in cols:
+            cols.remove("source")
+        idx = cols.index("text")
+        new_cols = cols[:idx] + ["original_summary", "source"] + cols[idx:]
+        # Some columns may not actually be present; filter
+        new_cols = [c for c in new_cols if c in merged.columns]
+        merged = merged[new_cols]
+    return merged
+
+
+def _write_perturbations_jsonl(
+    samples_df: pd.DataFrame | None,
+    perturbations_df: pd.DataFrame | None,
+    output_dir: Path,
+) -> None:
+    """Write samples.jsonl + perturbations.jsonl in the format that
+    ``robustness.runner.load_perturbations`` consumes, so the compiled
+    output directory itself can be passed to
+    ``persona-eval robustness-eval --perturbations-dir <output_dir>``.
+
+    Each ``(sample_id, test_name)`` group across runs is collapsed back
+    into a single record with its sorted-by-level list of
+    ``PerturbedSummary`` dicts. Within a group, level rows are already
+    deduplicated by ``_compile_perturbations_jsonl`` (most recent run
+    per ``(config, sample_id, test_name, level)``); the JSONL keeps the
+    latest run's text for each level.
+
+    Note: ``robustness-eval`` doesn't reason about config columns, so
+    samples are deduplicated to one record per ``sample_id`` here too.
+    Different-config rows for the same ``sample_id`` would collide; the
+    most recent wins (sorted by ``run_id``).
+    """
+    if samples_df is None or samples_df.empty:
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Samples: one record per sample_id, most recent run wins.
+    samples_sorted = samples_df.sort_values("run_id", kind="mergesort")
+    samples_one = samples_sorted.drop_duplicates(subset=["sample_id"], keep="last")
+
+    samples_path = output_dir / "samples.jsonl"
+    sample_fields = ("sample_id", "source", "summary", "audience", "reference", "metadata")
+    with open(samples_path, "w") as f:
+        for _, row in samples_one.iterrows():
+            obj: dict = {}
+            for fld in sample_fields:
+                if fld not in row.index:
+                    continue
+                val = row[fld]
+                if pd.isna(val):
+                    val = "" if fld != "metadata" else {}
+                if fld == "metadata" and isinstance(val, str) and val:
+                    try:
+                        val = json.loads(val)
+                    except json.JSONDecodeError:
+                        val = {}
+                obj[fld] = val
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    print(f"  samples.jsonl: wrote {len(samples_one):>6} records -> {samples_path}")
+
+    if perturbations_df is None or perturbations_df.empty:
+        return
+
+    # Perturbations: regroup level rows back into one record per
+    # (sample_id, test_name). Across configs, the most recent run wins
+    # for each (sample_id, test_name, level), then we drop config keys.
+    perturbs_sorted = perturbations_df.sort_values("run_id", kind="mergesort")
+    perturbs_one = perturbs_sorted.drop_duplicates(
+        subset=["sample_id", "test_name", "level"], keep="last",
+    )
+
+    perturbations_path = output_dir / "perturbations.jsonl"
+    with open(perturbations_path, "w") as f:
+        for (sid, tn), grp in perturbs_one.groupby(["sample_id", "test_name"], sort=False):
+            levels = []
+            for _, row in grp.sort_values("level").iterrows():
+                meta = row.get("metadata", {})
+                if isinstance(meta, str) and meta:
+                    try:
+                        meta = json.loads(meta)
+                    except json.JSONDecodeError:
+                        meta = {}
+                elif pd.isna(meta) if not isinstance(meta, (dict, list)) else False:
+                    meta = {}
+                levels.append({
+                    "level": int(row["level"]),
+                    "label": row["level_label"] if not pd.isna(row.get("level_label")) else "",
+                    "text": row["text"] if not pd.isna(row.get("text")) else "",
+                    "metadata": meta if isinstance(meta, dict) else {},
+                })
+            f.write(json.dumps({
+                "sample_id": sid, "test_name": tn, "levels": levels,
+            }, ensure_ascii=False) + "\n")
+    print(f"  perturbations.jsonl: wrote {len(perturbs_one.groupby(['sample_id', 'test_name'])):>6} records -> {perturbations_path}")
+
+
 def _dedup_by_keys(frames: list[pd.DataFrame], extra_keys: list[str]) -> pd.DataFrame:
     """Concat + dedup helper — same logic as ``_compile_spec`` but for already-attached frames."""
     combined = pd.concat(frames, ignore_index=True, sort=False)
@@ -456,7 +592,11 @@ def main():
 
         samples_df, perturbations_df = _compile_perturbations_jsonl(rob_runs)
         _write(samples_df, output_dir / "perturbation_samples.csv", "perturbation_samples.csv")
-        _write(perturbations_df, output_dir / "perturbations.csv", "perturbations.csv")
+        # Per-row CSV with original + perturbed side-by-side.
+        perturbations_csv_df = _augment_perturbations_with_originals(perturbations_df, samples_df)
+        _write(perturbations_csv_df, output_dir / "perturbations.csv", "perturbations.csv")
+        # JSONL pair in the layout that robustness-eval --perturbations-dir consumes.
+        _write_perturbations_jsonl(samples_df, perturbations_df, output_dir)
 
     print(f"\nDone. Compiled outputs in {output_dir}/")
 
