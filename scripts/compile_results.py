@@ -95,6 +95,56 @@ def _load_params(path: Path) -> dict:
         return {}
 
 
+def _reconcile_with_samples(run_path: Path, params: dict) -> dict:
+    """Prefer embedded sample metadata over run_params.json for dataset/split.
+
+    HF-loaded samples carry ``metadata.dataset`` and ``metadata.split`` set
+    at load time by ``load_from_huggingface``. When these disagree with the
+    run's argparse-recorded params, the embedded values are closer to
+    ground truth — they reflect what was actually loaded, while
+    ``run_params.json`` only records what the CLI was invoked with.
+
+    The most common cause of disagreement is a re-used run directory (an
+    earlier generate run with a different ``--dataset`` wrote samples,
+    then a later run with a new ``--dataset`` overwrote ``run_params.json``
+    but never re-wrote the perturbations). When we detect this, we emit
+    a one-line warning per run and use the embedded values for the
+    compiled output.
+    """
+    samples_path = run_path / "perturbations" / "samples.jsonl"
+    if not samples_path.exists():
+        return params
+
+    try:
+        with open(samples_path) as f:
+            first_line = f.readline().strip()
+    except OSError:
+        return params
+    if not first_line:
+        return params
+    try:
+        first = json.loads(first_line)
+    except json.JSONDecodeError:
+        return params
+
+    embedded = first.get("metadata") or {}
+    merged = dict(params)
+    mismatches: list[str] = []
+    for field in ("dataset", "split"):
+        ev = embedded.get(field)
+        pv = merged.get(field)
+        if ev and pv and ev != pv:
+            mismatches.append(f"{field}: params={pv!r} -> samples={ev!r}")
+            merged[field] = ev
+        elif ev and not pv:
+            merged[field] = ev
+
+    if mismatches:
+        print(f"  Warning: {run_path.name} run_params.json disagrees with "
+              f"samples.jsonl ({'; '.join(mismatches)}); using embedded values")
+    return merged
+
+
 def _inherit_from_perturbations(params: dict) -> dict:
     """For robustness-eval runs, fill missing CONFIG_FIELDS from the upstream
     robustness-generate run.
@@ -132,6 +182,7 @@ def discover_runs(root: Path, kind: str) -> list[Run]:
         run_id = sub.name[len("run_"):]
         params = _load_params(sub / "run_params.json")
         params = _inherit_from_perturbations(params)
+        params = _reconcile_with_samples(sub, params)
         runs.append(Run(run_id=run_id, kind=kind, path=sub, params=params))
     return runs
 
