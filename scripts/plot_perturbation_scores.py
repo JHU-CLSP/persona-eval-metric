@@ -77,6 +77,38 @@ def _metric_label(col: str) -> str:
     return METRIC_DISPLAY.get(col, col)
 
 
+# Okabe-Ito colorblind-safe palette (8 colors, distinguishable for the
+# three most common forms of color vision deficiency).
+CB_PALETTE = [
+    "#000000",  # black
+    "#E69F00",  # orange
+    "#56B4E9",  # sky blue
+    "#009E73",  # bluish green
+    "#F0E442",  # yellow
+    "#0072B2",  # blue
+    "#D55E00",  # vermillion
+    "#CC79A7",  # reddish purple
+]
+MARKERS = ["o", "s", "D", "^", "v", "P", "X", "*"]
+LINESTYLES = ["-", "--", "-.", ":"]
+
+
+def _line_style(i: int) -> dict:
+    """Return a (color, marker, linestyle) combo for the i-th line.
+
+    Cycles colors fastest, then markers, then linestyles, so the first
+    len(palette) lines have unique colors; beyond that, marker and dash
+    pattern keep them distinguishable even in grayscale.
+    """
+    nc = len(CB_PALETTE)
+    nm = len(MARKERS)
+    return {
+        "color":     CB_PALETTE[i % nc],
+        "marker":    MARKERS[(i // nc) % nm],
+        "linestyle": LINESTYLES[(i // (nc * nm)) % len(LINESTYLES)],
+    }
+
+
 def _resolve_scores_path(perturbations_dir: Path, override: Path | None) -> Path:
     if override is not None:
         return override
@@ -122,7 +154,6 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
 
     rows, cols = _grid_shape(len(tests))
     fig, axes = plt.subplots(rows, cols, figsize=(5.5 * cols, 4 * rows), squeeze=False)
-    cmap = plt.get_cmap("tab20" if len(metrics) > 10 else "tab10")
 
     for i, test in enumerate(tests):
         ax = axes[i // cols][i % cols]
@@ -134,9 +165,11 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
             baseline = stats["mean"].iloc[0]
             mean = stats["mean"] - baseline
             sem = stats["sem"].fillna(0.0)
-            ax.plot(stats.index, mean, marker="o", label=_metric_label(metric),
-                    color=cmap(j % cmap.N))
-            ax.fill_between(stats.index, mean - sem, mean + sem, alpha=0.15, color=cmap(j % cmap.N))
+            style = _line_style(j)
+            ax.plot(stats.index, mean, label=_metric_label(metric),
+                    linewidth=1.6, markersize=5, **style)
+            ax.fill_between(stats.index, mean - sem, mean + sem,
+                            alpha=0.15, color=style["color"], linewidth=0)
         ax.axhline(0.0, color="black", linewidth=0.6, linestyle="--", alpha=0.5)
         ax.set_title(_test_title(test))
         ax.set_xlabel("perturbation level")
@@ -187,8 +220,8 @@ def plot_raw(scores_df: pd.DataFrame, output: Path) -> None:
                 ax.set_visible(False)
                 continue
             sem = stats["sem"].fillna(0.0)
-            ax.plot(stats.index, stats["mean"], marker="o", color="C0")
-            ax.fill_between(stats.index, stats["mean"] - sem, stats["mean"] + sem, alpha=0.2, color="C0")
+            ax.plot(stats.index, stats["mean"], marker="o", color=CB_PALETTE[5])
+            ax.fill_between(stats.index, stats["mean"] - sem, stats["mean"] + sem, alpha=0.2, color=CB_PALETTE[5])
             if i == 0:
                 ax.set_title(_metric_label(metric), fontsize=9)
             if j == 0:
