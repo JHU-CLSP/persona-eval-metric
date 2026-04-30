@@ -93,31 +93,22 @@ def _inherit_from_perturbations(params: dict) -> dict:
     """For robustness-eval runs, fill missing CONFIG_FIELDS from the upstream
     robustness-generate run.
 
-    ``robustness-generate`` writes ``run_params.json`` at the run directory
-    ``<robustness_dir>/run_<id>/`` and perturbations at
-    ``<robustness_dir>/run_<id>/perturbations/``. Users pass
-    ``--perturbations-dir`` as either the run directory itself or its
-    ``perturbations`` subdir, so we look for ``run_params.json`` in
-    ``pdir`` first, then in ``pdir.parent``, taking the first match.
-    Eval-specific fields (e.g. ``llm_model``) are preserved.
+    ``robustness-generate`` writes ``run_params.json`` at ``<run>/`` and
+    perturbations at ``<run>/perturbations/``. ``robustness-eval`` then
+    receives ``--perturbations-dir <run>/perturbations`` but its own
+    ``run_params.json`` lacks ``dataset`` / ``annotations`` / etc.
+    Walk back up to ``<run>/run_params.json`` and inherit any missing
+    fields without overwriting eval-specific ones (e.g. ``llm_model``).
     """
     pdir = params.get("perturbations_dir")
     if not pdir:
         return params
-
-    p = Path(pdir)
-    upstream_path: Path | None = None
-    for candidate in (p / "run_params.json", p.parent / "run_params.json"):
-        if candidate.exists():
-            upstream_path = candidate
-            break
-    if upstream_path is None:
+    upstream = Path(pdir).parent / "run_params.json"
+    if not upstream.exists():
         return params
-
-    upstream_params = _load_params(upstream_path)
+    upstream_params = _load_params(upstream)
     if not upstream_params:
         return params
-
     merged = dict(params)
     for field in CONFIG_FIELDS:
         if merged.get(field) in (None, "") and upstream_params.get(field) not in (None, ""):
