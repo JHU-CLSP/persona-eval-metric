@@ -79,6 +79,43 @@ class Run:
         return self.params.get("dataset") or self.params.get("annotations") or ""
 
 
+def _load_params(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        print(f"  Warning: could not parse {path}: {e}")
+        return {}
+
+
+def _inherit_from_perturbations(params: dict) -> dict:
+    """For robustness-eval runs, fill missing CONFIG_FIELDS from the upstream
+    robustness-generate run.
+
+    ``robustness-generate`` writes ``run_params.json`` at ``<run>/`` and
+    perturbations at ``<run>/perturbations/``. ``robustness-eval`` then
+    receives ``--perturbations-dir <run>/perturbations`` but its own
+    ``run_params.json`` lacks ``dataset`` / ``annotations`` / etc.
+    Walk back up to ``<run>/run_params.json`` and inherit any missing
+    fields without overwriting eval-specific ones (e.g. ``llm_model``).
+    """
+    pdir = params.get("perturbations_dir")
+    if not pdir:
+        return params
+    upstream = Path(pdir).parent / "run_params.json"
+    if not upstream.exists():
+        return params
+    upstream_params = _load_params(upstream)
+    if not upstream_params:
+        return params
+    merged = dict(params)
+    for field in CONFIG_FIELDS:
+        if merged.get(field) in (None, "") and upstream_params.get(field) not in (None, ""):
+            merged[field] = upstream_params[field]
+    return merged
+
+
 def discover_runs(root: Path, kind: str) -> list[Run]:
     if not root.exists():
         return []
@@ -87,13 +124,8 @@ def discover_runs(root: Path, kind: str) -> list[Run]:
         if not sub.is_dir() or not sub.name.startswith("run_"):
             continue
         run_id = sub.name[len("run_"):]
-        params_path = sub / "run_params.json"
-        params: dict = {}
-        if params_path.exists():
-            try:
-                params = json.loads(params_path.read_text())
-            except json.JSONDecodeError as e:
-                print(f"  Warning: could not parse {params_path}: {e}")
+        params = _load_params(sub / "run_params.json")
+        params = _inherit_from_perturbations(params)
         runs.append(Run(run_id=run_id, kind=kind, path=sub, params=params))
     return runs
 
