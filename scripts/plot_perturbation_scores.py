@@ -33,6 +33,49 @@ import pandas as pd
 
 META_COLS = {"sample_id", "test_name", "level", "level_label"}
 
+# ---------------------------------------------------------------------------
+# Display registries — edit these to control labels in the rendered figure.
+# ``expected`` is one of {"increase", "decrease", "stable"}.
+# Tests / metrics not listed here fall back to their raw column name.
+# ---------------------------------------------------------------------------
+
+TEST_DISPLAY: dict[str, dict[str, str]] = {
+    "distractor_sentences":  {"label": "Distractor sentences",  "expected": "decrease"},
+    "incremental_addition":  {"label": "Incremental addition",  "expected": "increase"},
+    "lengthen_prose":        {"label": "Lengthen prose",        "expected": "stable"},
+    "shorten_prose":         {"label": "Shorten prose",         "expected": "stable"},
+    "different_audience":    {"label": "Different audience",    "expected": "decrease"},
+}
+
+METRIC_DISPLAY: dict[str, str] = {
+    "rouge1_f":       "ROUGE-1",
+    "rouge2_f":       "ROUGE-2",
+    "rougeL_f":       "ROUGE-L",
+    "bleu":           "BLEU",
+    "chrf":           "chrF",
+    "meteor":         "METEOR",
+    "bertscore_p":    "BERTScore (P)",
+    "bertscore_r":    "BERTScore (R)",
+    "bertscore_f":    "BERTScore (F)",
+    "coverage":       "Coverage",
+    "density":        "Density",
+    "compression":    "Compression",
+    "length":         "Length",
+    "syn_words":      "Syntactic (words)",
+    "syn_sentences":  "Syntactic (sentences)",
+}
+
+
+def _test_title(test_name: str) -> str:
+    info = TEST_DISPLAY.get(test_name)
+    if info is None:
+        return test_name
+    return f"{info['label']} (expected: {info['expected']})"
+
+
+def _metric_label(col: str) -> str:
+    return METRIC_DISPLAY.get(col, col)
+
 
 def _resolve_scores_path(perturbations_dir: Path, override: Path | None) -> Path:
     if override is not None:
@@ -91,22 +134,37 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
             baseline = stats["mean"].iloc[0]
             mean = stats["mean"] - baseline
             sem = stats["sem"].fillna(0.0)
-            ax.plot(stats.index, mean, marker="o", label=metric, color=cmap(j % cmap.N))
+            ax.plot(stats.index, mean, marker="o", label=_metric_label(metric),
+                    color=cmap(j % cmap.N))
             ax.fill_between(stats.index, mean - sem, mean + sem, alpha=0.15, color=cmap(j % cmap.N))
         ax.axhline(0.0, color="black", linewidth=0.6, linestyle="--", alpha=0.5)
-        ax.set_title(test)
+        ax.set_title(_test_title(test))
         ax.set_xlabel("perturbation level")
         ax.set_ylabel("score - baseline")
         ax.grid(True, alpha=0.3)
 
-    for k in range(len(tests), rows * cols):
-        axes[k // cols][k % cols].set_visible(False)
-
     handles, labels = axes[0][0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="lower center", ncol=min(len(labels), 4),
-                   bbox_to_anchor=(0.5, -0.02), frameon=False)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    empty_slots = [k for k in range(len(tests), rows * cols)]
+
+    if handles and empty_slots:
+        # Use the first empty subplot as a legend panel (bottom-right area).
+        legend_ax = axes[empty_slots[0] // cols][empty_slots[0] % cols]
+        legend_ax.axis("off")
+        ncol = 2 if len(labels) > 6 else 1
+        legend_ax.legend(handles, labels, loc="center", ncol=ncol, frameon=False,
+                         fontsize="medium")
+        for k in empty_slots[1:]:
+            axes[k // cols][k % cols].set_visible(False)
+        fig.tight_layout()
+    else:
+        for k in empty_slots:
+            axes[k // cols][k % cols].set_visible(False)
+        if handles:
+            fig.legend(handles, labels, loc="lower center",
+                       ncol=min(len(labels), 4),
+                       bbox_to_anchor=(0.5, -0.02), frameon=False)
+        fig.tight_layout(rect=(0, 0.04, 1, 1))
+
     fig.savefig(output, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -132,9 +190,9 @@ def plot_raw(scores_df: pd.DataFrame, output: Path) -> None:
             ax.plot(stats.index, stats["mean"], marker="o", color="C0")
             ax.fill_between(stats.index, stats["mean"] - sem, stats["mean"] + sem, alpha=0.2, color="C0")
             if i == 0:
-                ax.set_title(metric, fontsize=9)
+                ax.set_title(_metric_label(metric), fontsize=9)
             if j == 0:
-                ax.set_ylabel(test, fontsize=9)
+                ax.set_ylabel(_test_title(test), fontsize=9)
             ax.set_xlabel("level")
             ax.grid(True, alpha=0.3)
 
