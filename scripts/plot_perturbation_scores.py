@@ -63,6 +63,19 @@ METRIC_DISPLAY: dict[str, str] = {
     "length":         "Length",
     "syn_words":      "Syntactic (words)",
     "syn_sentences":  "Syntactic (sentences)",
+    "blanc":          "BLANC",
+    "summaqa":        "SummaQA",
+    "supert":         "SUPERT",
+    "factscore":      "FactScore",
+    "llm_judge_overall":      "LLM Judge (Overall)",
+    "llm_judge_annotator_absolute":      "LLM Judge (Annotator Absolute)",
+    "llm_judge_relevance":      "LLM Judge (Relevance)",
+    "llm_judge_coherence":      "LLM Judge (Coherence)",
+    "llm_judge_consistency":      "LLM Judge (Consistency)",
+    "llm_judge_fluency":      "LLM Judge (Fluency)",
+    "llm_judge_informativeness":      "LLM Judge (Informativeness)",
+    "persona_precision":      "Persona Precision",
+    "persona_recall":      "Persona Recall"
 }
 
 
@@ -102,10 +115,11 @@ def _line_style(i: int) -> dict:
     """
     nc = len(CB_PALETTE)
     nm = len(MARKERS)
+    nl = len(LINESTYLES)
     return {
+        "marker":    MARKERS[(i // nm) % nm],
+        "linestyle": LINESTYLES[(i // nm) % nl],
         "color":     CB_PALETTE[i % nc],
-        "marker":    MARKERS[(i // nc) % nm],
-        "linestyle": LINESTYLES[(i // (nc * nm)) % len(LINESTYLES)],
     }
 
 
@@ -151,6 +165,7 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
     """One subplot per test; one line per metric, normalized to baseline."""
     tests = sorted(scores_df["test_name"].unique())
     metrics = [c for c in scores_df.columns if c not in META_COLS]
+    metrics = [c for c in metrics if c in METRIC_DISPLAY]  # Only plot metrics we have display names for.
 
     rows, cols = _grid_shape(len(tests))
     fig, axes = plt.subplots(rows, cols, figsize=(5.5 * cols, 4 * rows), squeeze=False)
@@ -168,8 +183,8 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
             style = _line_style(j)
             ax.plot(stats.index, mean, label=_metric_label(metric),
                     linewidth=1.6, markersize=5, **style)
-            ax.fill_between(stats.index, mean - sem, mean + sem,
-                            alpha=0.15, color=style["color"], linewidth=0)
+            # ax.fill_between(stats.index, mean - sem, mean + sem,
+            #                 alpha=0.15, color=style["color"], linewidth=0)
         ax.axhline(0.0, color="black", linewidth=0.6, linestyle="--", alpha=0.5)
         ax.set_title(_test_title(test))
         ax.set_xlabel("perturbation level")
@@ -205,6 +220,7 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
 def plot_raw(scores_df: pd.DataFrame, output: Path) -> None:
     """One subplot per (test, metric); raw mean score with SEM band."""
     tests = sorted(scores_df["test_name"].unique())
+    
     metrics = [c for c in scores_df.columns if c not in META_COLS]
 
     rows = len(tests)
@@ -253,6 +269,7 @@ def main() -> None:
     scores_path = _resolve_scores_path(args.perturbations_dir, args.scores)
     scores_df = pd.read_csv(scores_path)
     print(f"Loaded {len(scores_df)} rows from {scores_path}")
+    print(f"Available metrics: {[c for c in scores_df.columns]}")
 
     if args.tests:
         scores_df = scores_df[scores_df["test_name"].isin(args.tests)]
