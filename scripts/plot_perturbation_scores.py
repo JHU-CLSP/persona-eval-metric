@@ -31,6 +31,22 @@ import numpy as np
 import pandas as pd
 
 
+# Per-element font sizes for the rendered figure. Edit individually to
+# tune titles, axis labels, ticks, and the legend.
+TITLE_FONTSIZE       = 11   # subplot titles (test name / metric name)
+AXIS_LABEL_FONTSIZE  = 11   # x/y axis labels
+TICK_LABEL_FONTSIZE  = 10   # x/y tick labels
+LEGEND_FONTSIZE      = 10   # legend entries
+
+plt.rcParams.update({
+    "axes.titlesize":   TITLE_FONTSIZE,
+    "axes.labelsize":   AXIS_LABEL_FONTSIZE,
+    "xtick.labelsize":  TICK_LABEL_FONTSIZE,
+    "ytick.labelsize":  TICK_LABEL_FONTSIZE,
+    "legend.fontsize":  LEGEND_FONTSIZE,
+})
+
+
 META_COLS = {"sample_id", "test_name", "level", "level_label"}
 
 # ---------------------------------------------------------------------------
@@ -147,6 +163,17 @@ def _grid_shape(n: int) -> tuple[int, int]:
     return rows, cols
 
 
+def _share_ylim(axes_list) -> None:
+    """Apply a common y-axis range (min/max across inputs) to every axis."""
+    if not axes_list:
+        return
+    lims = [ax.get_ylim() for ax in axes_list]
+    ymin = min(lo for lo, _ in lims)
+    ymax = max(hi for _, hi in lims)
+    for ax in axes_list:
+        ax.set_ylim(ymin, ymax)
+
+
 def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
     """One subplot per test; one line per metric, normalized to baseline."""
     tests = sorted(scores_df["test_name"].unique())
@@ -176,6 +203,11 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
         ax.set_ylabel("score - baseline")
         ax.grid(True, alpha=0.3)
 
+    # Share a single y-axis range across every test subplot so deltas
+    # are visually comparable.
+    used_axes = [axes[i // cols][i % cols] for i in range(len(tests))]
+    _share_ylim(used_axes)
+
     handles, labels = axes[0][0].get_legend_handles_labels()
     empty_slots = [k for k in range(len(tests), rows * cols)]
 
@@ -185,7 +217,7 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
         legend_ax.axis("off")
         ncol = 2 if len(labels) > 6 else 1
         legend_ax.legend(handles, labels, loc="center", ncol=ncol, frameon=False,
-                         fontsize="medium")
+                         fontsize=LEGEND_FONTSIZE)
         for k in empty_slots[1:]:
             axes[k // cols][k % cols].set_visible(False)
         fig.tight_layout()
@@ -211,6 +243,7 @@ def plot_raw(scores_df: pd.DataFrame, output: Path) -> None:
     cols = max(len(metrics), 1)
     fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 3 * rows), squeeze=False)
 
+    visible_axes: list = []
     for i, test in enumerate(tests):
         test_df = scores_df[scores_df["test_name"] == test]
         for j, metric in enumerate(metrics):
@@ -223,11 +256,15 @@ def plot_raw(scores_df: pd.DataFrame, output: Path) -> None:
             ax.plot(stats.index, stats["mean"], marker="o", color=CB_PALETTE[5])
             ax.fill_between(stats.index, stats["mean"] - sem, stats["mean"] + sem, alpha=0.2, color=CB_PALETTE[5])
             if i == 0:
-                ax.set_title(_metric_label(metric), fontsize=9)
+                ax.set_title(_metric_label(metric))
             if j == 0:
-                ax.set_ylabel(_test_title(test), fontsize=9)
+                ax.set_ylabel(_test_title(test))
             ax.set_xlabel("level")
             ax.grid(True, alpha=0.3)
+            visible_axes.append(ax)
+
+    # Share a single y-axis range across every visible subplot.
+    _share_ylim(visible_axes)
 
     fig.tight_layout()
     fig.savefig(output, dpi=150, bbox_inches="tight")
