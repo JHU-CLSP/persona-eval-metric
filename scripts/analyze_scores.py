@@ -251,6 +251,123 @@ def _get_score(df: pd.DataFrame, qi: int, label: str, metric_col: str) -> float 
     return None if pd.isna(val) else float(val)
 
 
+def _krippendorff_alpha_binary(rater_a: list[int], rater_b: list[int]) -> float:
+    """Krippendorff's α for two raters on a binary (0/1) nominal scale.
+
+    Uses the standard nominal-difference formulation:
+        α = 1 - D_o / D_e
+    where D_o is observed per-unit disagreement and D_e is expected
+    disagreement from the pooled category frequencies.
+    """
+    n = len(rater_a)
+    if n == 0:
+        return float("nan")
+    disagree = sum(1 for a, b in zip(rater_a, rater_b) if a != b)
+    d_o = disagree / n
+
+    n_total = 2 * n
+    n_1 = sum(rater_a) + sum(rater_b)
+    n_0 = n_total - n_1
+    if n_total < 2:
+        return float("nan")
+    d_e = 1.0 - (n_0 * (n_0 - 1) + n_1 * (n_1 - 1)) / (n_total * (n_total - 1))
+    if d_e == 0:
+        # All ratings collapse to one category — agreement is trivially perfect.
+        return float("nan")
+    return 1.0 - d_o / d_e
+
+
+def compute_agreement_stats(
+    scores_df: pd.DataFrame,
+    preferences: "pd.DataFrame",
+    cols: list[str],
+) -> pd.DataFrame:
+    """Per-metric agreement with human pairwise preferences.
+
+    For each non-"neither" comparison, encodes the pair in alphabetical
+    order (e.g. A-vs-B → A=0, B=1) and records the human's and the
+    metric's choice. Metric ties and missing scores are skipped.
+    Returns one row per metric with: n_comparisons, agreement_rate,
+    cohen_kappa, krippendorff_alpha.
+    """
+    from sklearn.metrics import cohen_kappa_score
+
+    standard = preferences[preferences["preferred"] != "N"]
+
+    rows = []
+    for metric_col in cols:
+        human_codes: list[int] = []
+        metric_codes: list[int] = []
+        for _, row in standard.iterrows():
+            qi = row["query_index"]
+            pref = row["preferred"]
+            other = row["other"]
+            pref_score = _get_score(scores_df, qi, pref, metric_col)
+            other_score = _get_score(scores_df, qi, other, metric_col)
+            if pref_score is None or other_score is None:
+                continue
+            if pref_score == other_score:
+                continue
+            first, second = sorted([pref, other])
+            human_codes.append(0 if pref == first else 1)
+            metric_pick = pref if pref_score > other_score else other
+            metric_codes.append(0 if metric_pick == first else 1)
+
+        n = len(human_codes)
+        if n == 0:
+            rows.append({
+                "metric": metric_col,
+                "n_comparisons": 0,
+                "agreement_rate": float("nan"),
+                "cohen_kappa": float("nan"),
+                "krippendorff_alpha": float("nan"),
+            })
+            continue
+
+        agree = sum(1 for h, m in zip(human_codes, metric_codes) if h == m)
+        try:
+            kappa = float(cohen_kappa_score(human_codes, metric_codes))
+        except ValueError:
+            kappa = float("nan")
+        alpha = _krippendorff_alpha_binary(human_codes, metric_codes)
+
+        rows.append({
+            "metric": metric_col,
+            "n_comparisons": n,
+            "agreement_rate": agree / n,
+            "cohen_kappa": kappa,
+            "krippendorff_alpha": alpha,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def print_agreement_stats(
+    scores_df: pd.DataFrame,
+    preferences: "pd.DataFrame",
+    cols: list[str],
+    output_dir: Path | None = None,
+) -> pd.DataFrame:
+    """Print and optionally save per-metric agreement stats."""
+    stats_df = compute_agreement_stats(scores_df, preferences, cols)
+
+    print("\n" + "=" * 70)
+    print("AGREEMENT WITH HUMAN PAIRWISE PREFERENCES")
+    print("=" * 70)
+    print("(non-'neither' comparisons; metric ties skipped)")
+    display = stats_df.copy()
+    for c in ("agreement_rate", "cohen_kappa", "krippendorff_alpha"):
+        display[c] = display[c].round(4)
+    print(display.to_string(index=False))
+
+    if output_dir is not None:
+        path = output_dir / "agreement_stats.csv"
+        stats_df.to_csv(path, index=False)
+        print(f"\n  Saved {path}")
+
+    return stats_df
+
+
 def print_agreement_examples(
     scores_df: pd.DataFrame,
     preferences: "pd.DataFrame",
@@ -447,6 +564,11 @@ def main():
         output_dir_for_examples = Path(args.output_dir) if not args.no_plots else None
         if output_dir_for_examples:
             output_dir_for_examples.mkdir(parents=True, exist_ok=True)
+
+        print_agreement_stats(
+            df, preferences, cols,
+            output_dir=output_dir_for_examples,
+        )
 
         print_agreement_examples(
             df, preferences, entries, cols,
