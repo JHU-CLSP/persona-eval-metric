@@ -65,6 +65,10 @@ class BaseMetric(ABC):
     def name(self) -> str:
         """Human-readable name for this metric."""
 
+    def __init__(self, **kwargs):
+        """Accept and ignore shared constructor kwargs by default."""
+        _ = kwargs
+
     @property
     def is_reference_free(self) -> bool:
         """Whether this metric can operate without a reference summary."""

@@ -108,5 +108,9 @@ llm_judge_rel_overall: 0.5
 #   Single query-focused comparison per pair (no per-dimension splitting)
 llm_judge_annotator: 0.5
 
+# Length (pairwise) — range [0, ∞) word count difference
+#   Prefers shorter summary; "tie" if difference < threshold
+length: 5.0
+
 # FACTScore (reference-free) — range [0, 1] fraction of supported atomic facts
 factscore: 0.1

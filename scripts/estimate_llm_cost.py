@@ -63,6 +63,7 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "deepseek-ai/DeepSeek-V3": (1.25, 1.25),
     "deepseek-ai/DeepSeek-V4-Pro": (2.10, 4.40),
     "mistralai/Mixtral-8x7B-Instruct-v0.1": (0.60, 0.60),
+    "moonshotai/Kimi-K2.6": (1.20, 4.50),
     # OpenAI
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
@@ -72,7 +73,8 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "o1": (15.00, 60.00),
     "o1-mini": (3.00, 12.00),
     "o3-mini": (1.10, 4.40),
-    "moonshotai/Kimi-K2.6": (1.20, 4.50),
+    # Anthropic
+    "claude-opus-4-6": (5.00, 25.00)
 }
 
 

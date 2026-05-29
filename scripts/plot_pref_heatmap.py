@@ -189,7 +189,10 @@ def main() -> int:
         print(f"Dropping {len(dropped)} rows with unparseable labels "
               f"(human_raw={dropped['human_raw'].unique().tolist()[:5]}..., "
               f"metric_raw={dropped['metric_raw'].unique().tolist()[:5]}...)")
+        print(dropped['human_raw'].value_counts())
+        print(dropped['metric_raw'].value_counts())
     merged = merged.dropna(subset=["human", "metric"])
+    print(merged['human_raw'].value_counts())
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

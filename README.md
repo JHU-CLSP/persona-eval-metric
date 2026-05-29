@@ -132,6 +132,33 @@ persona-eval robustness-eval \
 
 See [docs/robustness-testing.md](docs/robustness-testing.md) for test descriptions, expected behaviors, analysis methodology, and extending with custom tests.
 
+### Analyzing scores and visualizations
+
+After running annotation analysis, generate plots and summary statistics:
+
+```bash
+# Analyze metric scores and create distribution plots
+python scripts/analyze_scores.py results/metric_scores.csv -o analysis/
+
+# Plot distribution of scores for absolute (non-pairwise) metrics only
+python scripts/plot_absolute_distributions.py results/metric_scores.csv -o analysis/absolute_dist.png
+
+# Visualize human vs LLM-judge pairwise preferences as a heatmap
+python scripts/plot_pref_heatmap.py \
+    --annotations path/to/annotations.zip \
+    --pairwise results/metric_scores_pairwise_prefs.csv \
+    --output heatmap.png
+```
+
+The `analyze_scores.py` script generates:
+- `distributions.png` – Histogram + KDE for each metric
+- `boxplots_by_label.png` – Score distributions across labels (A/B/C/D)
+- `discriminative_power.png` – Within-query variance (how well each metric distinguishes between summaries)
+- `correlation_heatmap.png` – Spearman correlations between metrics
+- `per_query_heatmap.png` – Mean scores per query (normalized)
+
+The `plot_absolute_distributions.py` script focuses specifically on absolute metrics (excluding pairwise metrics) and includes mean/median lines in each histogram for easier comparison.
+
 ## Available metrics
 
 | Metric | Type | Notes |
@@ -178,7 +205,10 @@ src/persona_eval/
     ├── runner.py             # Test orchestrator
     └── analysis.py           # Effect analysis + reporting
 scripts/
-└── analyze_scores.py         # Metric score analysis and visualisation
+├── analyze_scores.py              # Metric score analysis and visualisation
+├── plot_absolute_distributions.py # Distribution plots for absolute metrics
+├── plot_pref_heatmap.py           # Heatmap of human vs metric pairwise preferences
+└── estimate_llm_cost.py           # Estimate LLM-based metric costs
 ```
 
 See [CLAUDE.md](CLAUDE.md) for architecture notes, extension points, and cache layout details.

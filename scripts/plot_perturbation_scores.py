@@ -33,10 +33,10 @@ import pandas as pd
 
 # Per-element font sizes for the rendered figure. Edit individually to
 # tune titles, axis labels, ticks, and the legend.
-TITLE_FONTSIZE       = 11   # subplot titles (test name / metric name)
-AXIS_LABEL_FONTSIZE  = 11   # x/y axis labels
-TICK_LABEL_FONTSIZE  = 10   # x/y tick labels
-LEGEND_FONTSIZE      = 10   # legend entries
+TITLE_FONTSIZE       = 22   # subplot titles (test name / metric name)
+AXIS_LABEL_FONTSIZE  = 22   # x/y axis labels
+TICK_LABEL_FONTSIZE  = 15   # x/y tick labels
+LEGEND_FONTSIZE      = 18   # legend entries
 
 plt.rcParams.update({
     "axes.titlesize":   TITLE_FONTSIZE,
@@ -56,11 +56,11 @@ META_COLS = {"sample_id", "test_name", "level", "level_label"}
 # ---------------------------------------------------------------------------
 
 TEST_DISPLAY: dict[str, dict[str, str]] = {
-    "distractor_sentences":  {"label": "Distractor sentences",  "expected": "decrease"},
-    "incremental_addition":  {"label": "Incremental addition",  "expected": "increase"},
-    "lengthen_prose":        {"label": "Lengthen prose",        "expected": "stable"},
-    "shorten_prose":         {"label": "Shorten prose",         "expected": "stable"},
-    "different_audience":    {"label": "Different audience",    "expected": "decrease"},
+    "distractor_sentences":  {"label": "Distractor sentences",  "expected": "decrease", "symbol": chr(0x2193)},
+    "incremental_addition":  {"label": "Incremental addition",  "expected": "increase", "symbol": chr(0x2191)},
+    "lengthen_prose":        {"label": "Lengthen prose",        "expected": "stable", "symbol": chr(0x2192)},
+    "shorten_prose":         {"label": "Shorten prose",         "expected": "stable", "symbol": chr(0x2192)},
+    "different_audience":    {"label": "Different audience",    "expected": "decrease", "symbol": chr(0x2193)},
 }
 
 METRIC_DISPLAY: dict[str, str] = {
@@ -80,7 +80,7 @@ METRIC_DISPLAY: dict[str, str] = {
     "syn_words":      "Syntactic (words)",
     "syn_sentences":  "Syntactic (sentences)",
     "blanc":          "BLANC",
-    "summaqa":        "SummaQA",
+    "summaqa_avg_fscore":        "SummaQA",
     "supert":         "SUPERT",
     "factscore":      "FactScore",
     "llm_judge_overall":      "LLM Judge (Overall)",
@@ -99,7 +99,7 @@ def _test_title(test_name: str) -> str:
     info = TEST_DISPLAY.get(test_name)
     if info is None:
         return test_name
-    return f"{info['label']} (expected: {info['expected']})"
+    return f"{info['label']} {info['symbol']}"
 
 
 def _metric_label(col: str) -> str:
@@ -214,14 +214,16 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
             #                 alpha=0.15, color=style["color"], linewidth=0)
         ax.axhline(0.0, color="black", linewidth=0.6, linestyle="--", alpha=0.5)
         ax.set_title(_test_title(test))
-        ax.set_xlabel("perturbation level")
-        ax.set_ylabel("score - baseline")
+        ax.set_xlabel("")
+        ax.set_ylabel("")
         ax.grid(True, alpha=0.3)
 
     # Share a single y-axis range across every test subplot so deltas
     # are visually comparable.
     used_axes = [axes[i // cols][i % cols] for i in range(len(tests))]
     _share_ylim(used_axes)
+    fig.supxlabel("Perturbation Level", fontsize=AXIS_LABEL_FONTSIZE)
+    fig.supylabel("Score (Normalized)", fontsize=AXIS_LABEL_FONTSIZE)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
     empty_slots = [k for k in range(len(tests), rows * cols)]
@@ -230,7 +232,8 @@ def plot_normalized(scores_df: pd.DataFrame, output: Path) -> None:
         # Use the first empty subplot as a legend panel (bottom-right area).
         legend_ax = axes[empty_slots[0] // cols][empty_slots[0] % cols]
         legend_ax.axis("off")
-        ncol = 2 if len(labels) > 6 else 1
+        ncol = 1
+        # ncol = 2 if len(labels) > 6 else 1
         legend_ax.legend(handles, labels, loc="center", ncol=ncol, frameon=False,
                          fontsize=LEGEND_FONTSIZE)
         for k in empty_slots[1:]:
