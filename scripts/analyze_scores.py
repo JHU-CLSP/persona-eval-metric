@@ -54,6 +54,9 @@ def _is_compiled_long(df: pd.DataFrame) -> bool:
     return {"metric", "score"}.issubset(df.columns)
 
 
+_PIVOT_NA_SENTINEL = "\x00__NA__\x00"
+
+
 def _pivot_compiled(df: pd.DataFrame) -> pd.DataFrame:
     """Pivot long-format compiled metric_scores.csv to one-row-per-observation wide.
 
@@ -61,16 +64,34 @@ def _pivot_compiled(df: pd.DataFrame) -> pd.DataFrame:
     within a single config (each compile-dedup decision picks the latest run
     per metric independently), and we don't want that to fragment what is
     logically one observation across multiple rows.
+
+    NaN values in index columns are filled with a sentinel before the pivot
+    and restored after, because ``pivot_table`` silently drops every row
+    that has NaN in any index column — and CONFIG_FIELDS legitimately
+    contain NaN (e.g. ``dataset``/``split`` are None for eval runs,
+    ``annotations`` is None for HF runs).
     """
     index_cols = [c for c in df.columns
                   if c not in ("metric", "score", "run_id")]
-    wide = df.pivot_table(
+
+    filled = df.copy()
+    filled_cols: list[str] = []
+    for c in index_cols:
+        if filled[c].isna().any():
+            filled[c] = filled[c].astype(object).where(filled[c].notna(), _PIVOT_NA_SENTINEL)
+            filled_cols.append(c)
+
+    wide = filled.pivot_table(
         index=index_cols,
         columns="metric",
         values="score",
         aggfunc="first",
     ).reset_index()
     wide.columns.name = None
+
+    for c in filled_cols:
+        wide[c] = wide[c].where(wide[c] != _PIVOT_NA_SENTINEL, np.nan)
+
     return wide
 
 
