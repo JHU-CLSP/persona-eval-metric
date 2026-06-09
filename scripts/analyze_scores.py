@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -29,10 +30,66 @@ from scipy import stats
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Config columns that compile_results.py prepends to every row. These are NOT
+# metric scores and must be excluded from analysis. Kept in sync with
+# CONFIG_FIELDS in scripts/compile_results.py.
+COMPILED_CONFIG_COLS = (
+    "dataset", "split", "annotations",
+    "persona", "include_query",
+    "llm_model", "llm_provider", "llm_prompt_file",
+    "neither_config", "include_neither", "strict_pairwise",
+    "num_samples", "seed",
+)
+COMPILED_NON_METRIC_COLS = COMPILED_CONFIG_COLS + ("run_id",)
+
+
 def _score_columns(df: pd.DataFrame) -> list[str]:
-    """Return metric score column names (everything except index columns)."""
-    skip = {"query_index", "label", "annotator_id"}
+    """Return metric score column names (everything except index/config columns)."""
+    skip = {"query_index", "label", "annotator_id"} | set(COMPILED_NON_METRIC_COLS)
     return [c for c in df.columns if c not in skip]
+
+
+def _is_compiled_long(df: pd.DataFrame) -> bool:
+    """True if df looks like the long-format compiled metric_scores.csv."""
+    return {"metric", "score"}.issubset(df.columns)
+
+
+def _pivot_compiled(df: pd.DataFrame) -> pd.DataFrame:
+    """Pivot long-format compiled metric_scores.csv to one-row-per-observation wide.
+
+    ``run_id`` is dropped from the pivot index because it varies row-by-row
+    within a single config (each compile-dedup decision picks the latest run
+    per metric independently), and we don't want that to fragment what is
+    logically one observation across multiple rows.
+    """
+    index_cols = [c for c in df.columns
+                  if c not in ("metric", "score", "run_id")]
+    wide = df.pivot_table(
+        index=index_cols,
+        columns="metric",
+        values="score",
+        aggfunc="first",
+    ).reset_index()
+    wide.columns.name = None
+    return wide
+
+
+def _varying_config_cols(df: pd.DataFrame) -> list[str]:
+    """Config columns present in df with more than one unique value (NaN counted)."""
+    return [c for c in COMPILED_CONFIG_COLS
+            if c in df.columns and df[c].nunique(dropna=False) > 1]
+
+
+def _slugify(value) -> str:
+    """Filesystem-safe slug for a config value."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "NA"
+    s = re.sub(r"[^A-Za-z0-9._=-]+", "_", str(value)).strip("_")
+    return s or "NA"
+
+
+def _config_slug(cols: list[str], values: tuple) -> str:
+    return "__".join(f"{c}={_slugify(v)}" for c, v in zip(cols, values))
 
 
 def _group_metrics(cols: list[str]) -> dict[str, list[str]]:
@@ -492,16 +549,108 @@ def print_agreement_examples(
 # Main
 # ---------------------------------------------------------------------------
 
+def analyze_subset(
+    df: pd.DataFrame,
+    args: argparse.Namespace,
+    heading: str,
+    output_dir: Path,
+    preferences,
+    entries,
+) -> None:
+    """Run the full analysis pipeline on one slice of data."""
+    print("\n" + "#" * 70)
+    print(f"# {heading}  ({len(df)} rows)")
+    print("#" * 70)
+
+    print(f"  Queries: {df['query_index'].nunique()}")
+    print(f"  Labels:  {sorted(df['label'].dropna().unique())}")
+    if "annotator_id" in df.columns:
+        print(f"  Annotators: {df['annotator_id'].nunique()}")
+
+    # Select columns
+    all_cols = _score_columns(df)
+    if args.metrics:
+        cols = [c for c in args.metrics if c in all_cols]
+        missing = [c for c in args.metrics if c not in all_cols]
+        if missing:
+            print(f"  Warning: columns not found: {missing}")
+    else:
+        cols = all_cols
+
+    # Drop columns that are entirely NaN in this slice — common after the
+    # long->wide pivot when other configs computed metrics this one didn't.
+    cols = [c for c in cols if c in df.columns and df[c].notna().any()]
+
+    if not cols:
+        print("  No metric columns with data in this slice. Skipping.")
+        return
+
+    print(f"  Analyzing {len(cols)} metric columns")
+
+    # --- Summary statistics ---
+    stats_df = print_summary_stats(df, cols)
+    label_means = print_per_label_means(df, cols)
+    disc = print_per_query_variance(df, cols)
+
+    corr = None
+    if len(cols) > 1:
+        corr = print_correlation_matrix(df, cols)
+
+    # --- Agreement / disagreement examples ---
+    if preferences is not None:
+        ex_dir = output_dir if not args.no_plots else None
+        if ex_dir is not None:
+            ex_dir.mkdir(parents=True, exist_ok=True)
+
+        print_agreement_stats(df, preferences, cols, output_dir=ex_dir)
+        print_agreement_examples(
+            df, preferences, entries, cols,
+            n_examples=args.n_examples,
+            output_dir=ex_dir,
+        )
+
+    # --- Plots ---
+    if not args.no_plots:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\nGenerating plots in {output_dir}/...")
+        plot_distributions(df, cols, output_dir)
+        plot_boxplots_by_label(df, cols, output_dir)
+        plot_discriminative_power(disc, output_dir)
+
+        if corr is not None:
+            plot_correlation_heatmap(corr, output_dir)
+
+        plot_per_query_heatmap(df, cols, output_dir)
+
+        # Save stats to CSV
+        stats_df.to_csv(output_dir / "summary_stats.csv")
+        print(f"  Saved {output_dir / 'summary_stats.csv'}")
+        label_means.to_csv(output_dir / "per_label_means.csv")
+        print(f"  Saved {output_dir / 'per_label_means.csv'}")
+        disc.to_frame("mean_within_query_std").to_csv(output_dir / "discriminative_power.csv")
+        print(f"  Saved {output_dir / 'discriminative_power.csv'}")
+        if corr is not None:
+            corr.to_csv(output_dir / "inter_metric_correlation.csv")
+            print(f"  Saved {output_dir / 'inter_metric_correlation.csv'}")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze metric scores from persona-eval pipeline",
+        description="Analyze metric scores from persona-eval pipeline. "
+                    "Accepts either a raw metric_scores.csv (one row per "
+                    "(query_index, label, annotator_id)) or a compiled "
+                    "long-format CSV from scripts/compile_results.py (which "
+                    "is pivoted back to wide and split by varying config).",
     )
     parser.add_argument(
         "scores", help="Path to metric_scores.csv",
     )
     parser.add_argument(
         "-o", "--output-dir", default="analysis",
-        help="Directory to save plots (default: analysis/)",
+        help="Directory to save plots (default: analysis/). When the input "
+             "is a compiled CSV with varying configs, one subdirectory per "
+             "config combination is created under here.",
     )
     parser.add_argument(
         "--metrics", nargs="+", default=None,
@@ -524,36 +673,17 @@ def main():
     # Load data
     df = pd.read_csv(args.scores)
     print(f"Loaded {len(df)} rows from {args.scores}")
-    print(f"  Queries: {df['query_index'].nunique()}")
-    print(f"  Labels:  {sorted(df['label'].unique())}")
-    if "annotator_id" in df.columns:
-        print(f"  Annotators: {df['annotator_id'].nunique()}")
 
-    # Select columns
-    all_cols = _score_columns(df)
-    if args.metrics:
-        cols = [c for c in args.metrics if c in all_cols]
-        missing = [c for c in args.metrics if c not in all_cols]
-        if missing:
-            print(f"  Warning: columns not found: {missing}")
-    else:
-        cols = all_cols
+    # Detect compiled long-format input and pivot back to wide.
+    if _is_compiled_long(df):
+        print("  Detected compiled long-format input; pivoting metric->columns.")
+        df = _pivot_compiled(df)
+        print(f"  After pivot: {len(df)} rows, {len(df.columns)} columns")
 
-    if not cols:
-        print("No metric columns found. Exiting.")
-        sys.exit(1)
-
-    print(f"  Analyzing {len(cols)} metric columns")
-
-    # --- Summary statistics ---
-    stats_df = print_summary_stats(df, cols)
-    label_means = print_per_label_means(df, cols)
-    disc = print_per_query_variance(df, cols)
-
-    if len(cols) > 1:
-        corr = print_correlation_matrix(df, cols)
-
-    # --- Agreement / disagreement examples ---
+    # Load annotations once (shared across all config groups — the annotation
+    # source is the dataset, which doesn't vary with model/persona/etc.).
+    preferences = None
+    entries = None
     if args.annotations:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from persona_eval.annotations import load_annotations, get_pairwise_preferences
@@ -561,53 +691,28 @@ def main():
         _, entries = load_annotations(args.annotations)
         preferences = get_pairwise_preferences(entries)
 
-        output_dir_for_examples = Path(args.output_dir) if not args.no_plots else None
-        if output_dir_for_examples:
-            output_dir_for_examples.mkdir(parents=True, exist_ok=True)
+    # Group by varying config columns. If none vary (or none are present),
+    # treat the whole file as one slice.
+    base_output_dir = Path(args.output_dir)
+    varying = _varying_config_cols(df)
 
-        print_agreement_stats(
-            df, preferences, cols,
-            output_dir=output_dir_for_examples,
-        )
+    if not varying:
+        analyze_subset(df, args, "all data", base_output_dir, preferences, entries)
+        print("\nDone.")
+        return
 
-        print_agreement_examples(
-            df, preferences, entries, cols,
-            n_examples=args.n_examples,
-            output_dir=output_dir_for_examples,
-        )
+    groups = list(df.groupby(list(varying), dropna=False, sort=False))
+    print(f"\nVarying config columns: {list(varying)}")
+    print(f"  Found {len(groups)} configuration group(s); writing one "
+          f"analysis per group under {base_output_dir}/")
 
-    # --- Plots ---
-    if not args.no_plots:
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        print(f"\nGenerating plots in {output_dir}/...")
-        plot_distributions(df, cols, output_dir)
-        plot_boxplots_by_label(df, cols, output_dir)
-        plot_discriminative_power(disc, output_dir)
-
-        if len(cols) > 1:
-            plot_correlation_heatmap(corr, output_dir)
-
-        plot_per_query_heatmap(df, cols, output_dir)
-
-        # Save stats to CSV
-        stats_path = output_dir / "summary_stats.csv"
-        stats_df.to_csv(stats_path)
-        print(f"  Saved {stats_path}")
-
-        label_path = output_dir / "per_label_means.csv"
-        label_means.to_csv(label_path)
-        print(f"  Saved {label_path}")
-
-        disc_path = output_dir / "discriminative_power.csv"
-        disc.to_frame("mean_within_query_std").to_csv(disc_path)
-        print(f"  Saved {disc_path}")
-
-        if len(cols) > 1:
-            corr_path = output_dir / "inter_metric_correlation.csv"
-            corr.to_csv(corr_path)
-            print(f"  Saved {corr_path}")
+    for values, sub_df in groups:
+        if not isinstance(values, tuple):
+            values = (values,)
+        slug = _config_slug(list(varying), values)
+        sub_out = base_output_dir / slug
+        heading = ", ".join(f"{c}={v}" for c, v in zip(varying, values))
+        analyze_subset(sub_df, args, heading, sub_out, preferences, entries)
 
     print("\nDone.")
 
